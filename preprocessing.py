@@ -19,6 +19,7 @@ from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
+from core.icp_alignment import align_strips_incremental
 
 
 def get_las_header(las_file):
@@ -168,6 +169,11 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         clean_target_fp = os.path.splitext(target_fp)[0]
         final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.las")
 
+        strip_inputs = las_files
+        if getattr(config, "use_strip_icp", False) and len(las_files) > 1:
+            config.current_aoi_name = clean_target_fp
+            strip_inputs = align_strips_incremental(las_files, config)
+
         if os.path.exists(final_output_file):
             print(f"Skipping {target_fp}: Already processed.")
             continue
@@ -184,7 +190,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         processed_chunks = []
         process_args = []
 
-        for input_file in las_files:
+        for input_file in strip_inputs:
             if not is_utm_crs(input_file):
                 # Handle both .las and .laz extensions
                 base_name = os.path.basename(input_file)

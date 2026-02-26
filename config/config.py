@@ -69,6 +69,18 @@ class Configuration:
         self.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
         self.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
 
+
+        # ------ STRIP ICP ALIGNMENT ------
+
+        self.use_strip_icp = False
+        self.icp_use_ground_only = True
+        self.icp_voxel_size = 1.0
+        self.icp_max_correspondence_distance = 2.0
+        self.icp_max_iterations = 50
+        self.icp_min_overlap_points = 10000
+        self.icp_save_intermediate = True
+        self.icp_save_logs = True
+
         # ------ VALIDATION ------
 
         self.data_type = 'raster'   # Type of validation data, can be 'raster' or 'vector' (points)
