@@ -109,6 +109,31 @@ def _effective_distance(value_m: float, units_mode: str, points_xy: np.ndarray) 
     return max(value_m, 1e-9)
 
 
+
+
+def _lonlat_to_local_metric(points_xyz: np.ndarray, lon0: float, lat0: float) -> np.ndarray:
+    lat0_rad = np.radians(lat0)
+    cos_lat0 = np.clip(np.cos(lat0_rad), 1e-6, None)
+    x_m = (points_xyz[:, 0] - lon0) * cos_lat0 * 111320.0
+    y_m = (points_xyz[:, 1] - lat0) * 111320.0
+    z_m = points_xyz[:, 2]
+    return np.column_stack((x_m, y_m, z_m))
+
+
+def _local_metric_to_lonlat(points_xyz_m: np.ndarray, lon0: float, lat0: float) -> np.ndarray:
+    lat0_rad = np.radians(lat0)
+    cos_lat0 = np.clip(np.cos(lat0_rad), 1e-6, None)
+    lon = (points_xyz_m[:, 0] / (cos_lat0 * 111320.0)) + lon0
+    lat = (points_xyz_m[:, 1] / 111320.0) + lat0
+    z = points_xyz_m[:, 2]
+    return np.column_stack((lon, lat, z))
+
+
+def _rotation_angle_deg(transform: np.ndarray) -> float:
+    rot = transform[:3, :3]
+    trace_val = np.clip((np.trace(rot) - 1.0) / 2.0, -1.0, 1.0)
+    return float(np.degrees(np.arccos(trace_val)))
+
 def _voxel_downsample_indices(points: np.ndarray, voxel_size: float) -> np.ndarray:
     if points.size == 0:
         return np.array([], dtype=np.int64)
@@ -247,11 +272,8 @@ def extract_overlap_area(strip_a_points: np.ndarray, strip_b_points: np.ndarray)
 def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tuple[np.ndarray, float, float, list[dict]]:
     """Run rigid ICP and capture per-iteration metrics."""
     max_iter = int(getattr(config, "icp_max_iterations", 50))
-
-    all_xy = np.vstack((source_points[:, :2], target_points[:, :2]))
-    units_mode = _resolve_units_mode(all_xy, config)
-    voxel_size = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), units_mode, all_xy)
-    max_corr = _effective_distance(float(getattr(config, "icp_max_correspondence_distance", 2.0)), units_mode, all_xy)
+    voxel_size = float(getattr(config, "icp_voxel_size", 1.0))
+    max_corr = float(getattr(config, "icp_max_correspondence_distance", 2.0))
 
     import open3d as o3d
 
@@ -302,12 +324,21 @@ def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tup
     return transform, last_fitness, last_rmse, details
 
 
-def apply_transformation_to_las(input_path: str, transform_matrix: np.ndarray, output_path: str) -> None:
+def apply_transformation_to_las(input_path: str, transform_matrix: np.ndarray, output_path: str, local_metric_reference: dict | None = None) -> None:
     """Apply rigid transform to XYZ while preserving all LAS attributes and CRS/header."""
     las = laspy.read(input_path)
     xyz = np.column_stack((np.asarray(las.x), np.asarray(las.y), np.asarray(las.z)))
-    xyz_h = np.hstack((xyz, np.ones((xyz.shape[0], 1), dtype=xyz.dtype)))
-    transformed = (transform_matrix @ xyz_h.T).T[:, :3]
+
+    if local_metric_reference and local_metric_reference.get("mode") == "degrees":
+        lon0 = float(local_metric_reference["lon0"])
+        lat0 = float(local_metric_reference["lat0"])
+        xyz_local = _lonlat_to_local_metric(xyz, lon0=lon0, lat0=lat0)
+        xyz_h = np.hstack((xyz_local, np.ones((xyz_local.shape[0], 1), dtype=xyz_local.dtype)))
+        transformed_local = (transform_matrix @ xyz_h.T).T[:, :3]
+        transformed = _local_metric_to_lonlat(transformed_local, lon0=lon0, lat0=lat0)
+    else:
+        xyz_h = np.hstack((xyz, np.ones((xyz.shape[0], 1), dtype=xyz.dtype)))
+        transformed = (transform_matrix @ xyz_h.T).T[:, :3]
 
     las.x = transformed[:, 0]
     las.y = transformed[:, 1]
@@ -365,8 +396,12 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
 
                 pair_units = src_meta["units_mode"] if src_meta["units_mode"] != "unknown" else tgt_meta["units_mode"]
                 combined_xy = np.vstack((src_points[:, :2], tgt_points[:, :2])) if len(src_points) and len(tgt_points) else np.empty((0, 2))
-                eff_voxel = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), pair_units, combined_xy)
-                eff_corr = _effective_distance(float(getattr(config, "icp_max_correspondence_distance", 2.0)), pair_units, combined_xy)
+                if pair_units == "degrees":
+                    eff_voxel = float(getattr(config, "icp_voxel_size", 1.0))
+                    eff_corr = float(getattr(config, "icp_max_correspondence_distance", 2.0))
+                else:
+                    eff_voxel = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), pair_units, combined_xy)
+                    eff_corr = _effective_distance(float(getattr(config, "icp_max_correspondence_distance", 2.0)), pair_units, combined_xy)
 
                 save_icp_log(
                     logger,
@@ -416,11 +451,62 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
                     aligned_paths.append(src_out)
                     continue
 
-                transform, fitness, rmse, details = run_icp(src_overlap, tgt_overlap, config)
+                local_metric_reference = None
+                if pair_units == "degrees":
+                    lon0 = float(np.mean(tgt_overlap[:, 0]))
+                    lat0 = float(np.mean(tgt_overlap[:, 1]))
+                    src_for_icp = _lonlat_to_local_metric(src_overlap, lon0=lon0, lat0=lat0)
+                    tgt_for_icp = _lonlat_to_local_metric(tgt_overlap, lon0=lon0, lat0=lat0)
+                    local_metric_reference = {"mode": "degrees", "lon0": lon0, "lat0": lat0}
+                    save_icp_log(logger, f"Local metric frame origin lon0={lon0:.12f}, lat0={lat0:.12f}")
+                else:
+                    src_for_icp = src_overlap
+                    tgt_for_icp = tgt_overlap
+
+                original_voxel = getattr(config, "icp_voxel_size", 1.0)
+                original_corr = getattr(config, "icp_max_correspondence_distance", 2.0)
+                config.icp_voxel_size = eff_voxel
+                config.icp_max_correspondence_distance = eff_corr
+                try:
+                    transform, fitness, rmse, details = run_icp(src_for_icp, tgt_for_icp, config)
+                finally:
+                    config.icp_voxel_size = original_voxel
+                    config.icp_max_correspondence_distance = original_corr
+
+                translation_m = float(np.linalg.norm(transform[:3, 3]))
+                rotation_deg = _rotation_angle_deg(transform)
+                min_fitness = float(getattr(config, "icp_min_fitness", 0.2))
+                max_translation_m = float(getattr(config, "icp_max_translation_m", 50.0))
+                max_rotation_deg = float(getattr(config, "icp_max_rotation_deg", 2.0))
+
                 save_icp_log(logger, f"ICP fitness={fitness:.6f} rmse={rmse:.6f}")
                 save_icp_log(logger, f"Transform:\n{transform}")
+                save_icp_log(logger, f"Transform stats translation_m={translation_m:.4f}, rotation_deg={rotation_deg:.4f}")
 
-                apply_transformation_to_las(src_original, transform, src_out)
+                reject_reasons = []
+                if translation_m > max_translation_m:
+                    reject_reasons.append(f"translation_m {translation_m:.4f} > {max_translation_m:.4f}")
+                if rotation_deg > max_rotation_deg:
+                    reject_reasons.append(f"rotation_deg {rotation_deg:.4f} > {max_rotation_deg:.4f}")
+                if fitness < min_fitness:
+                    reject_reasons.append(f"fitness {fitness:.6f} < {min_fitness:.6f}")
+
+                if pair_units == "degrees":
+                    lat0_for_log = local_metric_reference["lat0"] if local_metric_reference else float(np.mean(tgt_overlap[:, 1]))
+                    lat0_rad = np.radians(lat0_for_log)
+                    cos_lat0 = np.clip(np.cos(lat0_rad), 1e-6, None)
+                    dlon = transform[0, 3] / (cos_lat0 * 111320.0)
+                    dlat = transform[1, 3] / 111320.0
+                    save_icp_log(logger, f"Translation approx degrees dlon={dlon:.12f}, dlat={dlat:.12f}, dz={transform[2, 3]:.6f}")
+
+                if reject_reasons:
+                    save_icp_log(logger, f"Transform rejected: {'; '.join(reject_reasons)}. Passthrough unchanged.", "warning")
+                    shutil.copy2(src_original, src_out)
+                    aligned_paths.append(src_out)
+                    continue
+
+                save_icp_log(logger, "Transform accepted and applied.")
+                apply_transformation_to_las(src_original, transform, src_out, local_metric_reference=local_metric_reference)
                 aligned_paths.append(src_out)
 
                 if getattr(config, "icp_save_logs", True):
