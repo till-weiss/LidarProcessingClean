@@ -69,6 +69,27 @@ class Configuration:
         self.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
         self.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
 
+
+        # ------ OPTIONAL STRIP ICP ALIGNMENT ------
+        self.use_strip_icp = False
+        self.icp_use_ground_only = True
+
+        # ICP parameters
+        self.icp_voxel_size = 1.0
+        self.icp_max_correspondence_distance = 2.0
+        self.icp_max_iterations = 50
+        self.icp_min_overlap_points = 10000
+        self.icp_min_selected_points = 50000
+
+        # Ground-candidate selection parameters
+        self.icp_ground_grid_size = 1.0
+        self.icp_ground_max_points = 5_000_000 # optional cap after selection/downsampling
+
+        # Saving/logging
+        self.icp_save_intermediate = True
+        self.icp_save_logs = True
+        self.icp_param_units = "auto"   # auto-detect XY units; optionally force "degrees" or "metres"
+
         # ------ VALIDATION ------
 
         self.data_type = 'raster'   # Type of validation data, can be 'raster' or 'vector' (points)
