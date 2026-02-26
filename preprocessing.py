@@ -19,6 +19,7 @@ from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
+from core.icp_alignment import align_strips_incremental
 
 
 def get_las_header(las_file):
@@ -180,6 +181,10 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         gdf = gpd.read_file(footprint_path)
         temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
         os.makedirs(temp_dir, exist_ok=True)
+
+        if getattr(config, "use_strip_icp", False):
+            config.icp_current_aoi = clean_target_fp
+            las_files = align_strips_incremental(las_files, config)
 
         processed_chunks = []
         process_args = []
