@@ -1,7 +1,7 @@
 import logging
 import os
 import shutil
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
 import laspy
 import numpy as np
@@ -34,50 +34,127 @@ def _build_logger(config):
     logger.setLevel(logging.INFO)
     logger.propagate = False
 
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-        h.close()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
 
     if getattr(config, "icp_save_logs", True):
-        fh = logging.FileHandler(os.path.join(log_dir, "icp_debug.log"), mode="w")
-        fh.setFormatter(logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s"))
-        logger.addHandler(fh)
+        file_handler = logging.FileHandler(os.path.join(log_dir, "icp_debug.log"), mode="w")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s"))
+        logger.addHandler(file_handler)
 
     return logger
 
 
 def _close_logger(logger):
-    for h in list(logger.handlers):
-        logger.removeHandler(h)
-        h.close()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
 
 
 def _as_point_cloud(points: np.ndarray):
     import open3d as o3d
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    return pcd
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(points)
+    return point_cloud
 
 
-def _read_selected_points_with_indices(las_path: str, config) -> Tuple[np.ndarray, np.ndarray]:
+def detect_xy_units(points_xy: np.ndarray) -> Literal["degrees", "metres", "unknown"]:
+    """Detect whether XY values are likely geodetic degrees or projected metres."""
+    if points_xy.size == 0:
+        return "unknown"
+
+    x = points_xy[:, 0]
+    y = points_xy[:, 1]
+
+    x_in_range = np.mean((x >= -180.0) & (x <= 180.0))
+    y_in_range = np.mean((y >= -90.0) & (y <= 90.0))
+
+    if x_in_range > 0.95 and y_in_range > 0.95:
+        return "degrees"
+    return "metres"
+
+
+def _resolve_units_mode(points_xy: np.ndarray, config) -> Literal["degrees", "metres", "unknown"]:
+    forced = str(getattr(config, "icp_param_units", "auto")).lower()
+    if forced in {"degrees", "metres"}:
+        return forced
+    return detect_xy_units(points_xy)
+
+
+def _metres_to_degrees(lat_mean: float) -> Tuple[float, float]:
+    deg_per_m_lat = 1.0 / 111320.0
+    cos_lat = np.cos(np.radians(lat_mean))
+    cos_lat = np.clip(np.abs(cos_lat), 1e-6, None)
+    deg_per_m_lon = 1.0 / (111320.0 * cos_lat)
+    return deg_per_m_lon, deg_per_m_lat
+
+
+def _effective_xy_scales(grid_size_m: float, units_mode: str, points_xy: np.ndarray) -> Tuple[float, float]:
+    if units_mode == "degrees":
+        lat_mean = float(np.mean(points_xy[:, 1])) if points_xy.size else 0.0
+        deg_per_m_lon, deg_per_m_lat = _metres_to_degrees(lat_mean)
+        gx = max(grid_size_m * deg_per_m_lon, 1e-12)
+        gy = max(grid_size_m * deg_per_m_lat, 1e-12)
+        return gx, gy
+    return max(grid_size_m, 1e-9), max(grid_size_m, 1e-9)
+
+
+def _effective_distance(value_m: float, units_mode: str, points_xy: np.ndarray) -> float:
+    if units_mode == "degrees":
+        lat_mean = float(np.mean(points_xy[:, 1])) if points_xy.size else 0.0
+        deg_per_m_lon, deg_per_m_lat = _metres_to_degrees(lat_mean)
+        return max(value_m * max(deg_per_m_lon, deg_per_m_lat), 1e-12)
+    return max(value_m, 1e-9)
+
+
+def _voxel_downsample_indices(points: np.ndarray, voxel_size: float) -> np.ndarray:
+    if points.size == 0:
+        return np.array([], dtype=np.int64)
+    if voxel_size <= 0:
+        return np.arange(points.shape[0], dtype=np.int64)
+
+    mins = points.min(axis=0)
+    grid = np.floor((points - mins) / voxel_size).astype(np.int64)
+    key_to_idx = {}
+    for i, key in enumerate(map(tuple, grid)):
+        if key not in key_to_idx:
+            key_to_idx[key] = i
+    return np.fromiter(key_to_idx.values(), dtype=np.int64)
+
+
+def _read_las_points(las_path: str) -> np.ndarray:
     with laspy.open(las_path) as fh:
         las = fh.read()
+    return np.column_stack((np.asarray(las.x), np.asarray(las.y), np.asarray(las.z)))
 
-    x = np.asarray(las.x)
-    y = np.asarray(las.y)
-    z = np.asarray(las.z)
-    points = np.column_stack((x, y, z))
 
+def _read_selected_points_with_indices(las_path: str, config) -> Tuple[np.ndarray, np.ndarray, dict]:
+    points = _read_las_points(las_path)
     if len(points) == 0:
-        return np.empty((0, 3)), np.array([], dtype=np.int64)
+        return np.empty((0, 3)), np.array([], dtype=np.int64), {
+            "units_mode": "unknown",
+            "effective_grid_x": float(getattr(config, "icp_ground_grid_size", 1.0)),
+            "effective_grid_y": float(getattr(config, "icp_ground_grid_size", 1.0)),
+            "fallback_used": False,
+        }
+
+    units_mode = _resolve_units_mode(points[:, :2], config)
+    grid_size_m = float(getattr(config, "icp_ground_grid_size", 1.0))
+    grid_x, grid_y = _effective_xy_scales(grid_size_m, units_mode, points[:, :2])
 
     if not getattr(config, "icp_use_ground_only", True):
-        return points, np.arange(points.shape[0], dtype=np.int64)
+        return points, np.arange(points.shape[0], dtype=np.int64), {
+            "units_mode": units_mode,
+            "effective_grid_x": grid_x,
+            "effective_grid_y": grid_y,
+            "fallback_used": False,
+        }
 
-    cell_size = float(getattr(config, "icp_ground_grid_size", 1.0))
-    ix = np.floor((x - x.min()) / cell_size).astype(np.int64)
-    iy = np.floor((y - y.min()) / cell_size).astype(np.int64)
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+    ix = np.floor((x - x.min()) / grid_x).astype(np.int64)
+    iy = np.floor((y - y.min()) / grid_y).astype(np.int64)
 
     key_to_best = {}
     for idx, key in enumerate(zip(ix, iy)):
@@ -85,11 +162,10 @@ def _read_selected_points_with_indices(las_path: str, config) -> Tuple[np.ndarra
         if best_idx is None or z[idx] < z[best_idx]:
             key_to_best[key] = idx
 
-    ground_idx = np.fromiter(key_to_best.values(), dtype=np.int64)
+    ground_idx = np.asarray(list(key_to_best.values()), dtype=np.int64)
     if ground_idx.size == 0:
-        return np.empty((0, 3)), np.array([], dtype=np.int64)
+        ground_idx = np.array([], dtype=np.int64)
 
-    # Lightweight SMRF-like gate: discard points too high above 3x3 neighborhood minimums.
     tol = float(getattr(config, "threshold", 0.5))
     z_map = {k: z[v] for k, v in key_to_best.items()}
     keep = []
@@ -98,27 +174,41 @@ def _read_selected_points_with_indices(las_path: str, config) -> Tuple[np.ndarra
         local_min = z[idx]
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                nz = z_map.get((cx + dx, cy + dy))
-                if nz is not None and nz < local_min:
-                    local_min = nz
+                neighbor_z = z_map.get((cx + dx, cy + dy))
+                if neighbor_z is not None and neighbor_z < local_min:
+                    local_min = neighbor_z
         if z[idx] <= local_min + tol:
             keep.append(idx)
 
-    if not keep:
-        keep = ground_idx.tolist()
+    selected_idx = np.asarray(keep if keep else ground_idx.tolist(), dtype=np.int64)
 
-    selected_idx = np.asarray(keep, dtype=np.int64)
+    min_selected = int(getattr(config, "icp_min_selected_points", 50_000))
+    fallback_used = False
+    if selected_idx.size < min_selected:
+        fallback_used = True
+        selected_idx = np.arange(points.shape[0], dtype=np.int64)
+
+        fallback_voxel = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), units_mode, points[:, :2])
+        keep_local = _voxel_downsample_indices(points[selected_idx], fallback_voxel)
+        selected_idx = selected_idx[keep_local]
+
     cap = int(getattr(config, "icp_ground_max_points", 5_000_000))
     if selected_idx.size > cap:
         rng = np.random.default_rng(42)
         selected_idx = rng.choice(selected_idx, size=cap, replace=False)
 
-    return points[selected_idx], selected_idx
+    metadata = {
+        "units_mode": units_mode,
+        "effective_grid_x": grid_x,
+        "effective_grid_y": grid_y,
+        "fallback_used": fallback_used,
+    }
+    return points[selected_idx], selected_idx, metadata
 
 
 def select_icp_points(las_path: str, config) -> np.ndarray:
     """Return XYZ points for ICP selection (ground-candidate or full cloud)."""
-    selected_points, _ = _read_selected_points_with_indices(las_path, config)
+    selected_points, _, _ = _read_selected_points_with_indices(las_path, config)
     return selected_points
 
 
@@ -156,9 +246,12 @@ def extract_overlap_area(strip_a_points: np.ndarray, strip_b_points: np.ndarray)
 
 def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tuple[np.ndarray, float, float, list[dict]]:
     """Run rigid ICP and capture per-iteration metrics."""
-    voxel_size = float(getattr(config, "icp_voxel_size", 1.0))
-    max_corr = float(getattr(config, "icp_max_correspondence_distance", 2.0))
     max_iter = int(getattr(config, "icp_max_iterations", 50))
+
+    all_xy = np.vstack((source_points[:, :2], target_points[:, :2]))
+    units_mode = _resolve_units_mode(all_xy, config)
+    voxel_size = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), units_mode, all_xy)
+    max_corr = _effective_distance(float(getattr(config, "icp_max_correspondence_distance", 2.0)), units_mode, all_xy)
 
     import open3d as o3d
 
@@ -267,17 +360,39 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
             src_out = os.path.join(aligned_dir, f"strip_{src_num:02d}_aligned.laz")
 
             try:
-                src_points, src_idx = _read_selected_points_with_indices(src_original, config)
-                tgt_points, tgt_idx = _read_selected_points_with_indices(tgt_aligned_prev, config)
+                src_points, src_idx, src_meta = _read_selected_points_with_indices(src_original, config)
+                tgt_points, tgt_idx, tgt_meta = _read_selected_points_with_indices(tgt_aligned_prev, config)
+
+                pair_units = src_meta["units_mode"] if src_meta["units_mode"] != "unknown" else tgt_meta["units_mode"]
+                combined_xy = np.vstack((src_points[:, :2], tgt_points[:, :2])) if len(src_points) and len(tgt_points) else np.empty((0, 2))
+                eff_voxel = _effective_distance(float(getattr(config, "icp_voxel_size", 1.0)), pair_units, combined_xy)
+                eff_corr = _effective_distance(float(getattr(config, "icp_max_correspondence_distance", 2.0)), pair_units, combined_xy)
 
                 save_icp_log(
                     logger,
                     f"Pair strip{src_num:02d}->{tgt_num:02d} | source={os.path.basename(src_original)} | target={os.path.basename(tgt_aligned_prev)}",
                 )
+                save_icp_log(logger, f"Units mode={pair_units}")
+                save_icp_log(
+                    logger,
+                    f"Effective grid source=({src_meta['effective_grid_x']:.12f}, {src_meta['effective_grid_y']:.12f}) target=({tgt_meta['effective_grid_x']:.12f}, {tgt_meta['effective_grid_y']:.12f})",
+                )
+                save_icp_log(logger, f"Effective voxel_size={eff_voxel:.12f} max_corr_distance={eff_corr:.12f}")
                 save_icp_log(logger, f"Selected points source={len(src_points)}, target={len(tgt_points)}")
+
+                if src_meta.get("fallback_used"):
+                    save_icp_log(logger, f"Source fallback triggered: selected<{int(getattr(config, 'icp_min_selected_points', 50000))}, switched to full-cloud + voxel downsample", "warning")
+                if tgt_meta.get("fallback_used"):
+                    save_icp_log(logger, f"Target fallback triggered: selected<{int(getattr(config, 'icp_min_selected_points', 50000))}, switched to full-cloud + voxel downsample", "warning")
 
                 if len(src_points) == 0 or len(tgt_points) == 0:
                     save_icp_log(logger, "Selection produced empty points; passthrough.", "warning")
+                    shutil.copy2(src_original, src_out)
+                    aligned_paths.append(src_out)
+                    continue
+
+                if len(src_points) < 1000 or len(tgt_points) < 1000:
+                    save_icp_log(logger, f"Insufficient selected points for ICP (source={len(src_points)}, target={len(tgt_points)}); passthrough.", "warning")
                     shutil.copy2(src_original, src_out)
                     aligned_paths.append(src_out)
                     continue

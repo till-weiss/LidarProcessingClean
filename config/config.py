@@ -79,6 +79,7 @@ class Configuration:
         self.icp_max_correspondence_distance = 2.0
         self.icp_max_iterations = 50
         self.icp_min_overlap_points = 10000
+        self.icp_min_selected_points = 50000
 
         # Ground-candidate selection parameters
         self.icp_ground_grid_size = 1.0
@@ -87,6 +88,7 @@ class Configuration:
         # Saving/logging
         self.icp_save_intermediate = True
         self.icp_save_logs = True
+        self.icp_param_units = "auto"   # auto-detect XY units; optionally force "degrees" or "metres"
 
         # ------ VALIDATION ------
 
