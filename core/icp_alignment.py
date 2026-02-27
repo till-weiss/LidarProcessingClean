@@ -21,7 +21,7 @@ def _ensure_dirs(config) -> Tuple[str, str, str]:
     aoi_name = _get_aoi_name(config)
     aligned_dir = os.path.join(config.preprocessed_dir, "aligned_strips", aoi_name)
     inter_dir = os.path.join(config.preprocessed_dir, "icp_intermediate", aoi_name)
-    log_dir = os.path.join(config.results_dir, "icp_logs", aoi_name)
+    log_dir = os.path.join(config.results_dir, config.run_name, "icp_logs", aoi_name)
     os.makedirs(aligned_dir, exist_ok=True)
     os.makedirs(inter_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
