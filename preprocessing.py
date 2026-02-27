@@ -179,7 +179,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 projected_path = strip_path
                 if not is_utm_crs(strip_path):
                     base_name = os.path.basename(strip_path)
-                    out_name = base_name.replace('.las', '_preicp_utm.las').replace('.laz', '_preicp_utm.las')
+                    out_name = base_name.replace('.las', '_preicp_utm.laz').replace('.laz', '_preicp_utm.laz')
                     projected_path = os.path.join(prep_utm_dir, out_name)
                     if not os.path.exists(projected_path):
                         projected_path = reproject_las(strip_path, projected_path)
