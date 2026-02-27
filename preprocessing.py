@@ -179,7 +179,8 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 projected_path = strip_path
                 if not is_utm_crs(strip_path):
                     base_name = os.path.basename(strip_path)
-                    out_name = base_name.replace('.las', '_preicp_utm.laz').replace('.laz', '_preicp_utm.laz')
+                    base_root, _ = os.path.splitext(base_name)
+                    out_name = f"{base_root}_preicp_utm.laz"
                     projected_path = os.path.join(prep_utm_dir, out_name)
                     if not os.path.exists(projected_path):
                         projected_path = reproject_las(strip_path, projected_path)
@@ -284,13 +285,14 @@ def preprocess_all(conf):
     os.makedirs(os.path.join(config.preprocessed_dir, run_name), exist_ok=True)
     os.makedirs(os.path.join(config.results_dir, run_name), exist_ok=True)
 
-    gdfs = os.listdir(config.target_area_dir)
+    vector_exts = (".gpkg", ".shp", ".geojson", ".json")
+    gdfs = [f for f in os.listdir(config.target_area_dir) if f.lower().endswith(vector_exts)]
     for gdf in gdfs:
         gdf_path = os.path.join(config.target_area_dir, gdf)
         gdf_loaded = gpd.read_file(gdf_path)
         if len(gdf_loaded) > 1:
             print("\n--- Target areas are multi-geometry. Splitting into separate files ---")
-            for gdf_name in os.listdir(config.target_area_dir):
+            for gdf_name in gdfs:
                 split_gpkg(os.path.join(config.target_area_dir, gdf_name), config.target_area_dir, field_name=config.target_name_field)
             break
 
