@@ -7,7 +7,7 @@ A pipeline to process LiDAR point clouds from aerial campaigns into **Digital El
 ## **Project Structure**  
 The code is structured around three main steps in the pipeline:  
 
-1. **Preprocessing** (`preprocessing.py`) – Assigns point clouds to target areas and filters outliers.  
+1. **Preprocessing** (`preprocessing.py`) – Assigns point clouds to target areas, optionally aligns strips with ICP, and filters outliers.  
 2. **Processing** (`processing.py`) – Converts preprocessed point clouds into **DSM, DEM, and CHM** outputs.  
 3. **Validation** (`validation.py`) – Evaluates generated models against other rasters or point data.  
 
@@ -22,7 +22,10 @@ project_root/
 ├── 02_pointclouds/            # Raw LiDAR point clouds (*.las or *.laz)
 ├── 03_las_footprints/         # Flight path footprints (generated if missing)
 ├── 04_preprocessed/           # Cleaned point clouds after outlier removal
+│   ├── aligned_strips/<AOI>/  # Optional: ICP-aligned strip outputs
+│   └── icp_intermediate/<AOI>/# Optional: ICP selected/overlap subsets
 ├── 05_results/                # Output rasters from processing
+│   └── icp_logs/<AOI>/        # Optional: ICP debug logs and iteration details
 │   └── <run_name>/            
 │       ├── DSM/               # Digital Surface Models
 │       ├── DTM/               # Digital Terrain Models
@@ -34,6 +37,7 @@ project_root/
 ### **1. Preprocessing**  
 - Assigns LiDAR point clouds to user-defined target areas (e.g., aerial image footprints or AOIs).  
 - Target areas should be stored as individual files but can be converted if necessary.  
+- Optional strip-to-strip ICP alignment can be run per AOI before merge (`use_strip_icp=True`).  
 - Outliers are removed using **statistical outlier removal** techniques.  
 
 ### **2. Processing**  
@@ -51,6 +55,28 @@ project_root/
 - Evaluates ground, surface, and vegetation height.  
 
 ![LiDAR Processing Workflow](lidarprocessing_workflow.png)
+
+### **Updated Flow (with optional ICP strip alignment)**
+```mermaid
+flowchart TD
+    A[Target AOI footprints + raw LAS/LAZ strips] --> B[Match strips to AOI]
+    B --> C{use_strip_icp?}
+    C -- No --> D[Use original strip list]
+    C -- Yes --> E[Select ICP points per strip
+(ground candidates or full cloud)]
+    E --> F[Extract XY overlap per strip pair]
+    F --> G[Incremental ICP
+strip k -> aligned strip k-1]
+    G --> H[Apply accepted transform to FULL strip
+(preserve all LAS attributes)]
+    H --> I[Aligned strip list]
+    D --> J[Merge + clean point clouds per AOI]
+    I --> J
+    J --> K[Preprocessed AOI LAS]
+    K --> L[DSM generation]
+    K --> M[DEM generation]
+    L --> N[CHM generation (optional)]
+```
 
 For efficiency, point clouds are split into **smaller chunks** and processed in **parallel**.  
 

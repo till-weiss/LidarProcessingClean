@@ -19,6 +19,7 @@ from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
+from core.icp_alignment import align_strips_incremental
 
 
 def get_las_header(las_file):
@@ -165,6 +166,39 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             print(f"No valid LAS files for {target_fp}. Skipping.")
             continue
 
+        strip_paths_for_aoi = las_files
+        if getattr(config, "use_strip_icp", False):
+            aoi_name = os.path.splitext(target_fp)[0]
+            prep_utm_dir = os.path.join(run_merged_dir, "PREP_UTM_FOR_ICP", aoi_name)
+            os.makedirs(prep_utm_dir, exist_ok=True)
+            print(f"[ICP] Pre-ICP reprojection folder: {prep_utm_dir}")
+
+            icp_strip_paths_projected = []
+            epsg_counts = {}
+            for strip_path in strip_paths_for_aoi:
+                projected_path = strip_path
+                if not is_utm_crs(strip_path):
+                    base_name = os.path.basename(strip_path)
+                    out_name = base_name.replace('.las', '_preicp_utm.las').replace('.laz', '_preicp_utm.las')
+                    projected_path = os.path.join(prep_utm_dir, out_name)
+                    if not os.path.exists(projected_path):
+                        projected_path = reproject_las(strip_path, projected_path)
+
+                _, _, strip_epsg = get_las_header(projected_path)
+                epsg_counts[strip_epsg] = epsg_counts.get(strip_epsg, 0) + 1
+                print(f"[ICP] Strip EPSG after pre-reprojection: {os.path.basename(projected_path)} -> EPSG:{strip_epsg}")
+                icp_strip_paths_projected.append(projected_path)
+
+            print(f"[ICP] EPSG set detected for AOI {aoi_name}: {epsg_counts}")
+            strip_paths_for_aoi = icp_strip_paths_projected
+
+            if len(epsg_counts) > 1:
+                print(f"[ICP][WARN] Multiple EPSGs detected for AOI {aoi_name}; skipping ICP. EPSGs={epsg_counts}")
+            else:
+                config.icp_current_aoi_name = aoi_name
+                strip_paths_for_aoi = align_strips_incremental(strip_paths_for_aoi, config)
+                print(f"[ICP] ICP alignment completed for AOI {aoi_name}")
+
         clean_target_fp = os.path.splitext(target_fp)[0]
         final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.las")
 
@@ -184,7 +218,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         processed_chunks = []
         process_args = []
 
-        for input_file in las_files:
+        for input_file in strip_paths_for_aoi:
             if not is_utm_crs(input_file):
                 # Handle both .las and .laz extensions
                 base_name = os.path.basename(input_file)
