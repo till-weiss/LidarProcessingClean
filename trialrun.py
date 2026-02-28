@@ -34,8 +34,36 @@ def main() -> None:
     # ICP toggle + metric-mode tuning
     config.use_strip_icp = True
     config.icp_use_ground_only = True
-    config.icp_min_overlap_points = 5000
-    config.icp_min_selected_points = 5000
+
+    # Overlap-driven pairing gates
+    config.icp_min_overlap_area = 10_000
+    config.icp_min_overlap_points = 300_000
+    config.icp_min_selected_points = 5_000
+
+    # Optional ground selection mode for ICP (default-safe: heuristic)
+    # Set to "classification" to use existing Classification or PDAL SMRF/CSF classification with fallback
+    config.icp_ground_method = "classification"
+    config.icp_ground_classifier = "smrf"  # "smrf" | "csf"
+    config.icp_ground_class = 2
+    config.icp_use_existing_classification = True
+    config.icp_classification_cache = True
+    config.icp_classification_voxel_size = 1.0
+    config.icp_min_classified_points = 50_000
+    config.icp_pdal_smrf_params = {
+        "window": 20.0,
+        "slope": 0.2,
+        "threshold": 0.5,
+        "scalar": 2.0,
+    }
+    # Example CSF params if you switch classifier to csf:
+    # config.icp_pdal_csf_params = {"resolution": 1.0, "rigidness": 3, "step": 1.0}
+
+    # Optional ICP estimator mode
+    config.icp_estimation = "point_to_plane"  # "point_to_point" | "point_to_plane"
+    config.icp_normal_radius = 2.0
+    config.icp_normal_max_nn = 30
+
+    # Keep current transform acceptance thresholds
     config.icp_min_fitness = 0.05
     config.icp_max_translation_m = 200.0
     config.icp_max_rotation_deg = 5.0

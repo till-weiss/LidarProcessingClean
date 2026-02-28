@@ -78,12 +78,27 @@ class Configuration:
         self.icp_voxel_size = 1.0
         self.icp_max_correspondence_distance = 2.0
         self.icp_max_iterations = 50
-        self.icp_min_overlap_points = 10000
+        self.icp_min_overlap_area = 10000  # m²
+        self.icp_min_overlap_points = 300000
         self.icp_min_selected_points = 50000
 
         # Ground-candidate selection parameters
         self.icp_ground_grid_size = 1.0
         self.icp_ground_max_points = 5_000_000 # optional cap after selection/downsampling
+        self.icp_ground_method = "heuristic"  # heuristic | classification
+        self.icp_ground_classifier = "smrf"  # smrf | csf
+        self.icp_ground_class = 2
+        self.icp_use_existing_classification = True
+        self.icp_classification_cache = True
+        self.icp_classification_voxel_size = 1.0
+        self.icp_min_classified_points = 50_000
+        self.icp_pdal_smrf_params = {}
+        self.icp_pdal_csf_params = {}
+
+        # ICP estimation mode
+        self.icp_estimation = "point_to_point"  # point_to_point | point_to_plane
+        self.icp_normal_radius = 2.0
+        self.icp_normal_max_nn = 30
 
         # Saving/logging
         self.icp_save_intermediate = True

@@ -22,11 +22,12 @@ project_root/
 ├── 02_pointclouds/            # Raw LiDAR point clouds (*.las or *.laz)
 ├── 03_las_footprints/         # Flight path footprints (generated if missing)
 ├── 04_preprocessed/           # Cleaned point clouds after outlier removal
-│   ├── aligned_strips/<AOI>/  # Optional: ICP-aligned strip outputs
-│   └── icp_intermediate/<AOI>/# Optional: ICP selected/overlap subsets
+│   └── <run_name>/
+│       ├── aligned_strips/<AOI>/   # Optional: ICP-aligned strip outputs
+│       └── icp_intermediate/<AOI>/ # Optional: ICP selected/overlap/classification subsets
 ├── 05_results/                # Output rasters from processing
-│   └── icp_logs/<AOI>/        # Optional: ICP debug logs and iteration details
-│   └── <run_name>/            
+│   └── <run_name>/
+│       ├── icp_logs/<AOI>/    # Optional: ICP debug logs and iteration details
 │       ├── DSM/               # Digital Surface Models
 │       ├── DTM/               # Digital Terrain Models
 │       └── CHM/               # Canopy Height Models (DSM - DTM)
@@ -77,6 +78,21 @@ strip k -> aligned strip k-1]
     K --> M[DEM generation]
     L --> N[CHM generation (optional)]
 ```
+
+
+## ICP optional modes (default-safe)
+- **Output locations**
+  - Aligned strips: `<preprocessed_dir>/<run_name>/aligned_strips/<AOI>/`
+  - ICP intermediate subsets: `<preprocessed_dir>/<run_name>/icp_intermediate/<AOI>/`
+  - ICP logs: `<results_dir>/<run_name>/icp_logs/<AOI>/`
+- **Classification-based ground selection (optional, OFF by default)**
+  - Set `icp_ground_method = "classification"`.
+  - Choose classifier with `icp_ground_classifier = "smrf"` or `"csf"`.
+  - Existing `Classification` values can be reused first (`icp_use_existing_classification = True`).
+  - If too few classified ground points are found, ICP automatically falls back to the heuristic selector.
+- **Point-to-plane ICP (optional, OFF by default)**
+  - Set `icp_estimation = "point_to_plane"` and tune `icp_normal_radius`, `icp_normal_max_nn`.
+  - Default remains `icp_estimation = "point_to_point"`.
 
 For efficiency, point clouds are split into **smaller chunks** and processed in **parallel**.  
 
