@@ -216,6 +216,55 @@ def extract_overlap_area(strip_a_points: np.ndarray, strip_b_points: np.ndarray)
     return strip_a_points[a_mask], strip_b_points[b_mask]
 
 
+def _overlap_metrics(strip_a_points: np.ndarray, strip_b_points: np.ndarray) -> dict:
+    """Compute XY bbox overlap metrics and corresponding overlap subsets."""
+    if strip_a_points.size == 0 or strip_b_points.size == 0:
+        return {
+            "area": 0.0,
+            "source_overlap": np.empty((0, 3)),
+            "target_overlap": np.empty((0, 3)),
+            "source_mask": np.zeros((strip_a_points.shape[0],), dtype=bool),
+            "target_mask": np.zeros((strip_b_points.shape[0],), dtype=bool),
+        }
+
+    a_min = strip_a_points[:, :2].min(axis=0)
+    a_max = strip_a_points[:, :2].max(axis=0)
+    b_min = strip_b_points[:, :2].min(axis=0)
+    b_max = strip_b_points[:, :2].max(axis=0)
+
+    ov_min = np.maximum(a_min, b_min)
+    ov_max = np.minimum(a_max, b_max)
+    ov_dims = ov_max - ov_min
+    if np.any(ov_dims <= 0):
+        return {
+            "area": 0.0,
+            "source_overlap": np.empty((0, 3)),
+            "target_overlap": np.empty((0, 3)),
+            "source_mask": np.zeros((strip_a_points.shape[0],), dtype=bool),
+            "target_mask": np.zeros((strip_b_points.shape[0],), dtype=bool),
+        }
+
+    source_mask = (
+        (strip_a_points[:, 0] >= ov_min[0])
+        & (strip_a_points[:, 0] <= ov_max[0])
+        & (strip_a_points[:, 1] >= ov_min[1])
+        & (strip_a_points[:, 1] <= ov_max[1])
+    )
+    target_mask = (
+        (strip_b_points[:, 0] >= ov_min[0])
+        & (strip_b_points[:, 0] <= ov_max[0])
+        & (strip_b_points[:, 1] >= ov_min[1])
+        & (strip_b_points[:, 1] <= ov_max[1])
+    )
+    return {
+        "area": float(ov_dims[0] * ov_dims[1]),
+        "source_overlap": strip_a_points[source_mask],
+        "target_overlap": strip_b_points[target_mask],
+        "source_mask": source_mask,
+        "target_mask": target_mask,
+    }
+
+
 def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tuple[np.ndarray, float, float, list[dict]]:
     """Run rigid ICP and capture per-iteration metrics in metric space."""
     _assert_metric_points(source_points, "ICP source points")
@@ -322,6 +371,7 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
     aligned_dir, inter_dir, log_dir = _ensure_dirs(config)
     logger = _build_logger(config)
     aligned_paths: List[str] = []
+    aligned_cache: List[dict] = []
 
     try:
         save_icp_log(logger, f"AOI={_get_aoi_name(config)} | strips={len(strip_paths)}")
@@ -330,6 +380,17 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
         first_out = os.path.join(aligned_dir, "strip_01_aligned.laz")
         shutil.copy2(strip_paths[0], first_out)
         aligned_paths.append(first_out)
+
+        first_points, first_idx, first_meta = _read_selected_points_with_indices(first_out, config)
+        aligned_cache.append(
+            {
+                "path": first_out,
+                "strip_num": 1,
+                "selected_points": first_points,
+                "selected_idx": first_idx,
+                "meta": first_meta,
+            }
+        )
 
         for idx in range(1, len(strip_paths)):
             src_original = strip_paths[idx]
@@ -340,57 +401,148 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
 
             try:
                 src_points, src_idx, src_meta = _read_selected_points_with_indices(src_original, config)
-                tgt_points, tgt_idx, tgt_meta = _read_selected_points_with_indices(tgt_aligned_prev, config)
-
-                save_icp_log(
-                    logger,
-                    f"Pair strip{src_num:02d}->{tgt_num:02d} | source={os.path.basename(src_original)} | target={os.path.basename(tgt_aligned_prev)}",
-                )
                 save_icp_log(logger, "Units mode=metres")
-                save_icp_log(
-                    logger,
-                    f"Effective grid source=({src_meta['effective_grid_x']:.6f}, {src_meta['effective_grid_y']:.6f}) target=({tgt_meta['effective_grid_x']:.6f}, {tgt_meta['effective_grid_y']:.6f})",
-                )
                 save_icp_log(
                     logger,
                     f"Effective voxel_size={float(getattr(config, 'icp_voxel_size', 1.0)):.6f} max_corr_distance={float(getattr(config, 'icp_max_correspondence_distance', 2.0)):.6f}",
                 )
-                save_icp_log(logger, f"Selected points source={len(src_points)}, target={len(tgt_points)}")
+                save_icp_log(logger, f"Selected points source={len(src_points)}")
 
                 if src_meta.get("fallback_used"):
                     save_icp_log(logger, f"Source fallback triggered: selected<{int(getattr(config, 'icp_min_selected_points', 50000))}, switched to full-cloud + voxel downsample", "warning")
+
+                if len(src_points) == 0:
+                    save_icp_log(logger, f"Pair strip{src_num:02d}->N/A status=skipped_low_overlap reason=empty source selection; passthrough.", "warning")
+                    shutil.copy2(src_original, src_out)
+                    aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
+                    continue
+
+                if len(src_points) < 1000:
+                    save_icp_log(logger, f"Pair strip{src_num:02d}->N/A status=skipped_low_overlap reason=insufficient source selected points ({len(src_points)}); passthrough.", "warning")
+                    shutil.copy2(src_original, src_out)
+                    aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
+                    continue
+
+                best_candidate = None
+                for candidate in aligned_cache:
+                    tgt_points = candidate["selected_points"]
+                    if len(tgt_points) == 0:
+                        continue
+                    metrics = _overlap_metrics(src_points, tgt_points)
+                    overlap_count = min(len(metrics["source_overlap"]), len(metrics["target_overlap"]))
+                    score = (metrics["area"], overlap_count)
+                    if best_candidate is None or score > best_candidate["score"]:
+                        best_candidate = {
+                            "candidate": candidate,
+                            "metrics": metrics,
+                            "score": score,
+                        }
+
+                if best_candidate is None:
+                    save_icp_log(logger, f"Pair strip{src_num:02d}->N/A status=skipped_low_overlap reason=no aligned target with overlap; passthrough.", "warning")
+                    shutil.copy2(src_original, src_out)
+                    aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
+                    continue
+
+                tgt_entry = best_candidate["candidate"]
+                tgt_points = tgt_entry["selected_points"]
+                tgt_idx = tgt_entry["selected_idx"]
+                tgt_meta = tgt_entry["meta"]
+                tgt_aligned_prev = tgt_entry["path"]
+                tgt_num = tgt_entry["strip_num"]
+
+                src_overlap = best_candidate["metrics"]["source_overlap"]
+                tgt_overlap = best_candidate["metrics"]["target_overlap"]
+                src_ov_mask = best_candidate["metrics"]["source_mask"]
+                tgt_ov_mask = best_candidate["metrics"]["target_mask"]
+                overlap_area = float(best_candidate["metrics"]["area"])
+                overlap_count = min(len(src_overlap), len(tgt_overlap))
+                src_overlap_ratio = float(len(src_overlap) / max(len(src_points), 1))
+                tgt_overlap_ratio = float(len(tgt_overlap) / max(len(tgt_points), 1))
+
+                save_icp_log(
+                    logger,
+                    f"Pair strip{src_num:02d}->{tgt_num:02d} | source={os.path.basename(src_original)} | target={os.path.basename(tgt_aligned_prev)} | selected_target_strip={os.path.basename(tgt_aligned_prev)}",
+                )
+                save_icp_log(
+                    logger,
+                    f"Effective grid source=({src_meta['effective_grid_x']:.6f}, {src_meta['effective_grid_y']:.6f}) target=({tgt_meta['effective_grid_x']:.6f}, {tgt_meta['effective_grid_y']:.6f})",
+                )
+                save_icp_log(logger, f"Selected points source={len(src_points)}, target={len(tgt_points)}")
+
                 if tgt_meta.get("fallback_used"):
                     save_icp_log(logger, f"Target fallback triggered: selected<{int(getattr(config, 'icp_min_selected_points', 50000))}, switched to full-cloud + voxel downsample", "warning")
 
-                if len(src_points) == 0 or len(tgt_points) == 0:
-                    save_icp_log(logger, "Selection produced empty points; passthrough.", "warning")
+                if len(tgt_points) < 1000:
+                    save_icp_log(logger, f"Pair strip{src_num:02d}->{tgt_num:02d} status=skipped_low_overlap reason=insufficient target selected points ({len(tgt_points)}); passthrough.", "warning")
                     shutil.copy2(src_original, src_out)
                     aligned_paths.append(src_out)
-                    continue
-
-                if len(src_points) < 1000 or len(tgt_points) < 1000:
-                    save_icp_log(logger, f"Insufficient selected points for ICP (source={len(src_points)}, target={len(tgt_points)}); passthrough.", "warning")
-                    shutil.copy2(src_original, src_out)
-                    aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
                     continue
 
                 smin, smax = src_points[:, :2].min(axis=0), src_points[:, :2].max(axis=0)
                 tmin, tmax = tgt_points[:, :2].min(axis=0), tgt_points[:, :2].max(axis=0)
                 save_icp_log(logger, f"Source XY bbox min={smin.tolist()} max={smax.tolist()}")
                 save_icp_log(logger, f"Target XY bbox min={tmin.tolist()} max={tmax.tolist()}")
+                save_icp_log(
+                    logger,
+                    f"Overlap area_m2={overlap_area:.3f} points_source={len(src_overlap)} points_target={len(tgt_overlap)} overlap_ratio_source={src_overlap_ratio:.6f} overlap_ratio_target={tgt_overlap_ratio:.6f}",
+                )
 
-                src_overlap, tgt_overlap = extract_overlap_area(src_points, tgt_points)
-                save_icp_log(logger, f"Overlap counts source={len(src_overlap)} target={len(tgt_overlap)}")
-
-                min_overlap = int(getattr(config, "icp_min_overlap_points", 10000))
-                if min(len(src_overlap), len(tgt_overlap)) < min_overlap:
+                min_overlap_area = float(getattr(config, "icp_min_overlap_area", 10_000.0))
+                min_overlap_points = int(getattr(config, "icp_min_overlap_points", 300_000))
+                if not (overlap_area > min_overlap_area or overlap_count > min_overlap_points):
                     save_icp_log(
                         logger,
-                        f"Not enough overlap points (<{min_overlap}); passthrough for strip {src_num:02d}.",
+                        f"Pair strip{src_num:02d}->{tgt_num:02d} status=skipped_low_overlap reason=overlap gate not met (area={overlap_area:.3f} <= {min_overlap_area:.3f} and points={overlap_count} <= {min_overlap_points}); passthrough.",
                         "warning",
                     )
                     shutil.copy2(src_original, src_out)
                     aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
                     continue
 
                 transform, fitness, rmse, details = run_icp(src_overlap, tgt_overlap, config)
@@ -414,14 +566,34 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
                     reject_reasons.append(f"fitness {fitness:.6f} < {min_fitness:.6f}")
 
                 if reject_reasons:
-                    save_icp_log(logger, f"Transform rejected: {'; '.join(reject_reasons)}. Passthrough unchanged.", "warning")
+                    save_icp_log(logger, f"Pair strip{src_num:02d}->{tgt_num:02d} status=rejected_transform reason={' ; '.join(reject_reasons)}. Passthrough unchanged.", "warning")
                     shutil.copy2(src_original, src_out)
                     aligned_paths.append(src_out)
+                    aligned_cache.append(
+                        {
+                            "path": src_out,
+                            "strip_num": src_num,
+                            "selected_points": src_points,
+                            "selected_idx": src_idx,
+                            "meta": src_meta,
+                        }
+                    )
                     continue
 
-                save_icp_log(logger, "Transform accepted and applied.")
+                save_icp_log(logger, f"Pair strip{src_num:02d}->{tgt_num:02d} status=accepted")
                 apply_transformation_to_las(src_original, transform, src_out)
                 aligned_paths.append(src_out)
+
+                out_points, out_idx, out_meta = _read_selected_points_with_indices(src_out, config)
+                aligned_cache.append(
+                    {
+                        "path": src_out,
+                        "strip_num": src_num,
+                        "selected_points": out_points,
+                        "selected_idx": out_idx,
+                        "meta": out_meta,
+                    }
+                )
 
                 if getattr(config, "icp_save_logs", True):
                     iter_path = os.path.join(log_dir, f"icp_iterations_strip{src_num:02d}_to_strip{tgt_num:02d}.txt")
@@ -471,6 +643,19 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
                 )
                 shutil.copy2(src_original, src_out)
                 aligned_paths.append(src_out)
+                try:
+                    out_points, out_idx, out_meta = _read_selected_points_with_indices(src_out, config)
+                except Exception:
+                    out_points, out_idx, out_meta = np.empty((0, 3)), np.array([], dtype=np.int64), {}
+                aligned_cache.append(
+                    {
+                        "path": src_out,
+                        "strip_num": src_num,
+                        "selected_points": out_points,
+                        "selected_idx": out_idx,
+                        "meta": out_meta,
+                    }
+                )
 
     finally:
         _close_logger(logger)
