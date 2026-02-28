@@ -78,7 +78,8 @@ class Configuration:
         self.icp_voxel_size = 1.0
         self.icp_max_correspondence_distance = 2.0
         self.icp_max_iterations = 50
-        self.icp_min_overlap_points = 10000
+        self.icp_min_overlap_area = 10000  # m²
+        self.icp_min_overlap_points = 300000
         self.icp_min_selected_points = 50000
 
         # Ground-candidate selection parameters
