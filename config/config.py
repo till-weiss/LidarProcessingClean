@@ -99,6 +99,7 @@ class Configuration:
         self.icp_estimation = "point_to_point"  # point_to_point | point_to_plane
         self.icp_normal_radius = 2.0
         self.icp_normal_max_nn = 30
+        self.icp_center_before_registration = False
 
         # Saving/logging
         self.icp_save_intermediate = True

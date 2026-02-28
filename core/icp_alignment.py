@@ -439,7 +439,21 @@ def _overlap_metrics(strip_a_points: np.ndarray, strip_b_points: np.ndarray) -> 
     }
 
 
-def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tuple[np.ndarray, float, float, list[dict]]:
+def _centroid(points: np.ndarray) -> np.ndarray:
+    """Return XYZ centroid for a point array."""
+    return points.mean(axis=0)
+
+
+def _local_to_global_transform(transform_local: np.ndarray, cs: np.ndarray, ct: np.ndarray) -> np.ndarray:
+    """Map centred-frame ICP transform back to global coordinates."""
+    transform_global = transform_local.copy()
+    rot = transform_local[:3, :3]
+    t_local = transform_local[:3, 3]
+    transform_global[:3, 3] = ct + t_local - rot @ cs
+    return transform_global
+
+
+def run_icp(source_points: np.ndarray, target_points: np.ndarray, config, logger=None) -> tuple[np.ndarray, float, float, list[dict]]:
     """Run rigid ICP and capture per-iteration metrics in metric space."""
     _assert_metric_points(source_points, "ICP source points")
     _assert_metric_points(target_points, "ICP target points")
@@ -458,15 +472,32 @@ def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tup
         source = source.voxel_down_sample(voxel_size)
         target = target.voxel_down_sample(voxel_size)
 
+    center_before = bool(getattr(config, "icp_center_before_registration", False))
+    source_working = source
+    target_working = target
+    cs = None
+    ct = None
+
+    if center_before:
+        source_np = np.asarray(source.points)
+        target_np = np.asarray(target.points)
+        if source_np.shape[0] > 0 and target_np.shape[0] > 0:
+            cs = _centroid(source_np)
+            ct = _centroid(target_np)
+            source_working = _as_point_cloud(source_np - cs)
+            target_working = _as_point_cloud(target_np - ct)
+            if logger is not None:
+                save_icp_log(logger, f"ICP centring enabled cs={cs.tolist()} ct={ct.tolist()}")
+
     estimator = o3d.pipelines.registration.TransformationEstimationPointToPoint()
     if estimation_mode == "point_to_plane":
         normal_radius = float(getattr(config, "icp_normal_radius", 2.0))
         normal_max_nn = int(getattr(config, "icp_normal_max_nn", 30))
         search = o3d.geometry.KDTreeSearchParamHybrid(radius=normal_radius, max_nn=normal_max_nn)
-        source.estimate_normals(search)
-        target.estimate_normals(search)
-        source.normalize_normals()
-        target.normalize_normals()
+        source_working.estimate_normals(search)
+        target_working.estimate_normals(search)
+        source_working.normalize_normals()
+        target_working.normalize_normals()
         estimator = o3d.pipelines.registration.TransformationEstimationPointToPlane()
 
     transform = np.eye(4)
@@ -477,8 +508,8 @@ def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tup
     for i in range(1, max_iter + 1):
         prev_transform = transform.copy()
         reg = o3d.pipelines.registration.registration_icp(
-            source,
-            target,
+            source_working,
+            target_working,
             max_corr,
             transform,
             estimator,
@@ -505,6 +536,11 @@ def run_icp(source_points: np.ndarray, target_points: np.ndarray, config) -> tup
 
     if details and details[-1]["converged_or_reason"] == "running":
         details[-1]["converged_or_reason"] = "max_iterations"
+
+    if center_before and cs is not None and ct is not None:
+        transform = _local_to_global_transform(transform, cs, ct)
+        if logger is not None:
+            save_icp_log(logger, "ICP transform converted from centred to global coordinates")
 
     return transform, last_fitness, last_rmse, details
 
@@ -728,7 +764,7 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
                 else:
                     save_icp_log(logger, "ICP estimation=point_to_point")
 
-                transform, fitness, rmse, details = run_icp(src_overlap, tgt_overlap, config)
+                transform, fitness, rmse, details = run_icp(src_overlap, tgt_overlap, config, logger)
 
                 translation_m = float(np.linalg.norm(transform[:3, 3]))
                 rotation_deg = _rotation_angle_deg(transform)
