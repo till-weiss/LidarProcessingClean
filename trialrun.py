@@ -62,6 +62,7 @@ def main() -> None:
     config.icp_estimation = "point_to_plane"  # "point_to_point" | "point_to_plane"
     config.icp_normal_radius = 2.0
     config.icp_normal_max_nn = 30
+    config.icp_center_before_registration = True  # optional numerical-stability centring in projected CRS
 
     # Keep current transform acceptance thresholds
     config.icp_min_fitness = 0.05
