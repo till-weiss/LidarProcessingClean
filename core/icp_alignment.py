@@ -214,6 +214,24 @@ def _run_pdal_ground_classification(input_path: str, output_path: str, config) -
             pass
 
 
+
+
+def _ensure_ground_subset(input_path: str, ground_path: str, ground_class: int) -> int:
+    """Create/reuse a ground-only subset LAS/LAZ and return ground-point count."""
+    las = laspy.read(input_path)
+    cls = np.asarray(las.classification)
+    ground_mask = cls == ground_class
+    ground_count = int(np.sum(ground_mask))
+    if ground_count == 0:
+        return 0
+    if not os.path.exists(ground_path):
+        subset = las.points[ground_mask]
+        out_las = laspy.LasData(las.header)
+        out_las.points = subset
+        os.makedirs(os.path.dirname(ground_path), exist_ok=True)
+        out_las.write(ground_path)
+    return ground_count
+
 def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tuple[np.ndarray, np.ndarray, dict]:
     points = _read_las_points(las_path)
     _assert_metric_points(points, f"Input strip {os.path.basename(las_path)}")
@@ -225,6 +243,7 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
             "effective_grid_y": float(getattr(config, "icp_ground_grid_size", 1.0)),
             "fallback_used": False,
             "selection_method": "empty",
+            "estimation_path": os.path.abspath(las_path),
         }
 
     grid_size = max(float(getattr(config, "icp_ground_grid_size", 1.0)), 1e-9)
@@ -236,6 +255,7 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
             "effective_grid_y": grid_size,
             "fallback_used": False,
             "selection_method": "full_cloud",
+            "estimation_path": os.path.abspath(las_path),
         }
 
     ground_method = str(getattr(config, "icp_ground_method", "heuristic")).lower()
@@ -253,6 +273,7 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
         "effective_grid_y": grid_size,
         "fallback_used": False,
         "selection_method": "heuristic",
+        "estimation_path": os.path.abspath(las_path),
     }
 
     if ground_method == "classification":
@@ -260,30 +281,30 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
         use_existing = bool(getattr(config, "icp_use_existing_classification", True))
         cache_enabled = bool(getattr(config, "icp_classification_cache", True))
 
+        _, inter_dir, _ = _ensure_dirs(config)
+        stem = os.path.splitext(os.path.basename(las_path))[0]
+        class_dir = os.path.join(inter_dir, "classified")
+        ground_dir = os.path.join(inter_dir, "ground")
+        os.makedirs(class_dir, exist_ok=True)
+        os.makedirs(ground_dir, exist_ok=True)
+        classified_path = os.path.join(class_dir, f"{stem}_classified.laz")
+        ground_path = os.path.join(ground_dir, f"{stem}_ground.laz")
+
         if use_existing:
             try:
-                las = laspy.read(las_path)
-                cls = np.asarray(las.classification)
-                existing_idx = np.where(cls == ground_class)[0]
-                _emit(f"Existing classification points for class {ground_class}: {existing_idx.size}")
-                if existing_idx.size >= min_classified_points:
-                    selected_idx = existing_idx.astype(np.int64)
+                existing_count = _ensure_ground_subset(las_path, ground_path, ground_class)
+                _emit(f"Existing classification points for class {ground_class}: {existing_count}")
+                if existing_count >= min_classified_points:
+                    selected_points = _read_las_points(ground_path)
                     metadata["selection_method"] = "classification_existing"
+                    metadata["estimation_path"] = os.path.abspath(ground_path)
+                    return selected_points, np.array([], dtype=np.int64), metadata
                 else:
-                    _emit(f"Existing classification below minimum ({existing_idx.size} < {min_classified_points}); trying PDAL classification", "warning")
+                    _emit(f"Existing classification below minimum ({existing_count} < {min_classified_points}); trying PDAL classification", "warning")
             except Exception as ex:
                 _emit(f"Existing classification read failed ({ex}); trying PDAL classification", "warning")
 
         if selected_idx.size < min_classified_points:
-            _, inter_dir, _ = _ensure_dirs(config)
-            stem = os.path.splitext(os.path.basename(las_path))[0]
-            class_dir = os.path.join(inter_dir, "classified")
-            ground_dir = os.path.join(inter_dir, "ground")
-            os.makedirs(class_dir, exist_ok=True)
-            os.makedirs(ground_dir, exist_ok=True)
-            classified_path = os.path.join(class_dir, f"{stem}_classified.laz")
-            ground_path = os.path.join(ground_dir, f"{stem}_ground.laz")
-
             pdal_ok = False
             if cache_enabled and os.path.exists(classified_path):
                 pdal_ok = True
@@ -297,22 +318,10 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
 
             if pdal_ok:
                 try:
-                    clas_las = laspy.read(classified_path)
-                    cls = np.asarray(clas_las.classification)
-                    ground_mask = cls == ground_class
-                    ground_count = int(np.sum(ground_mask))
+                    ground_count = _ensure_ground_subset(classified_path, ground_path, ground_class)
                     _emit(f"PDAL classified ground count={ground_count}")
                     if ground_count >= min_classified_points:
-                        ground_subset = np.column_stack((np.asarray(clas_las.x)[ground_mask], np.asarray(clas_las.y)[ground_mask], np.asarray(clas_las.z)[ground_mask]))
-                        if cache_enabled and not os.path.exists(ground_path):
-                            try:
-                                subset = clas_las.points[ground_mask]
-                                out_las = laspy.LasData(clas_las.header)
-                                out_las.points = subset
-                                out_las.write(ground_path)
-                            except Exception:
-                                pass
-                        selected_points = ground_subset
+                        selected_points = _read_las_points(ground_path)
                         cap = int(getattr(config, "icp_ground_max_points", 5_000_000))
                         if selected_points.shape[0] > cap:
                             rng = np.random.default_rng(42)
@@ -320,6 +329,7 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
                             selected_points = selected_points[keep]
                         metadata["selection_method"] = "classification_pdal"
                         metadata["fallback_used"] = False
+                        metadata["estimation_path"] = os.path.abspath(ground_path)
                         return selected_points, np.array([], dtype=np.int64), metadata
                     else:
                         _emit(f"PDAL classification below minimum ({ground_count} < {min_classified_points}); falling back to heuristic selector", "warning")
@@ -330,7 +340,9 @@ def _read_selected_points_with_indices(las_path: str, config, logger=None) -> Tu
             metadata["fallback_used"] = False
 
     if selected_idx.size == 0:
-        selected_idx, metadata = _read_selected_points_heuristic(points, config)
+        selected_idx, heuristic_meta = _read_selected_points_heuristic(points, config)
+        metadata.update(heuristic_meta)
+        metadata["estimation_path"] = os.path.abspath(las_path)
 
     cap = int(getattr(config, "icp_ground_max_points", 5_000_000))
     if selected_idx.size > cap:
@@ -670,10 +682,14 @@ def align_strips_incremental(strip_paths: List[str], config) -> List[str]:
                 src_overlap_ratio = float(len(src_overlap) / max(len(src_points), 1))
                 tgt_overlap_ratio = float(len(tgt_overlap) / max(len(tgt_points), 1))
 
+                src_est_path = str(src_meta.get("estimation_path", os.path.abspath(src_original)))
+                tgt_est_path = str(tgt_meta.get("estimation_path", os.path.abspath(tgt_aligned_prev)))
                 save_icp_log(
                     logger,
-                    f"Pair strip{src_num:02d}->{tgt_num:02d} | source={os.path.abspath(src_original)} | target={os.path.abspath(tgt_aligned_prev)} | selected_target_strip={os.path.abspath(tgt_aligned_prev)}",
+                    f"Pair strip{src_num:02d}->{tgt_num:02d} | full_source={os.path.abspath(src_original)} full_target={os.path.abspath(tgt_aligned_prev)} | est_source={src_est_path} est_target={tgt_est_path}",
                 )
+                save_icp_log(logger, f"ICP estimation source cloud: {src_est_path}")
+                save_icp_log(logger, f"ICP estimation target cloud: {tgt_est_path}")
                 save_icp_log(
                     logger,
                     f"Effective grid source=({src_meta['effective_grid_x']:.6f}, {src_meta['effective_grid_y']:.6f}) target=({tgt_meta['effective_grid_x']:.6f}, {tgt_meta['effective_grid_y']:.6f})",
