@@ -12,11 +12,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 import geopandas as gpd
 from tqdm import tqdm
-from shapely.geometry import shape
+from shapely.geometry import shape, box
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
-from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
+from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, merge_chunks_to_strip
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
 
@@ -33,6 +33,13 @@ def get_las_header(las_file):
 
 def process_chunk_wrapper(args):
     return process_chunk(*args)
+
+
+def get_las_bounds_wkt(las_file):
+    with laspy.open(las_file) as las:
+        min_x, min_y = las.header.mins[0], las.header.mins[1]
+        max_x, max_y = las.header.maxs[0], las.header.maxs[1]
+    return wkt_dumps(box(min_x, min_y, max_x, max_y))
 
 def plot_target_and_footprints(target_gdf, matched_las_paths, las_footprint_dir, output_path):
     fig, ax = plt.subplots(figsize=(10, 10))
@@ -182,7 +189,10 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         os.makedirs(temp_dir, exist_ok=True)
 
         processed_chunks = []
-        process_args = []
+        strips_dir = os.path.join(run_merged_dir, target_fp, "strips")
+        os.makedirs(strips_dir, exist_ok=True)
+
+        target_geom_wkt = None
 
         for input_file in las_files:
             if not is_utm_crs(input_file):
@@ -198,29 +208,37 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 gdf = gdf.to_crs(epsg=ref_crs)
 
             target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+            strip_geom_wkt = get_las_bounds_wkt(input_file)
+            chunks = create_chunks_from_wkt(strip_geom_wkt, chunk_size)
 
             if max_elev:
-
                 all_z = laspy.read(input_file).z
                 max_z = np.quantile(all_z, max_elev)
                 min_z = np.quantile(all_z, 1 - max_elev)
-
             else:
                 all_z = laspy.read(input_file).z
                 max_z = np.max(all_z)
                 min_z = np.min(all_z)
 
+            process_args = [
+                (input_file, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs)
+                for chunk in chunks
+            ]
 
-            for chunk in chunks:
-                process_args.append((input_file, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
+            strip_chunks = []
+            with tqdm(total=len(process_args), desc=f"Processing {os.path.basename(input_file)}", unit="chunk") as pbar:
+                with Pool(processes=num_workers) as pool:
+                    for processed_chunk in pool.imap_unordered(process_chunk_wrapper, process_args):
+                        if processed_chunk:
+                            strip_chunks.append(processed_chunk)
+                            processed_chunks.append(processed_chunk)
+                        pbar.update(1)
 
-        with tqdm(total=len(process_args), desc=f"Processing {target_fp}", unit="chunk") as pbar:
-            with Pool(processes=num_workers) as pool:
-                for processed_chunk in pool.imap_unordered(process_chunk_wrapper, process_args):
-                    if processed_chunk:
-                        processed_chunks.append(processed_chunk)
-                    pbar.update(1)
+            if strip_chunks:
+                strip_name = os.path.splitext(os.path.basename(input_file))[0]
+                strip_output_file = os.path.join(strips_dir, f"{strip_name}_strip.las")
+                merge_chunks_to_strip(strip_chunks, strip_output_file)
+                print(f"Saved strip-level LAS: {strip_output_file}")
 
         if processed_chunks:
             merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)

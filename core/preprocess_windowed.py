@@ -125,6 +125,20 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
         print(f"Error merging and cropping: {e}")
         return None
 
+
+def merge_chunks_to_strip(chunk_files, output_file):
+    """Merge processed chunks into a single strip-level LAS file."""
+    pipeline = [{"type": "readers.las", "filename": f} for f in chunk_files]
+    pipeline.append({"type": "filters.merge"})
+    pipeline.append({"type": "writers.las", "filename": output_file})
+
+    try:
+        pdal.pipeline.Pipeline(json.dumps(pipeline)).execute()
+        return output_file
+    except Exception as e:
+        print(f"Error merging chunks to strip {output_file}: {e}")
+        return None
+
 def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0):
     """Process multiple LAS files for different target areas."""
     os.makedirs(preprocessed_dir, exist_ok=True)
