@@ -41,6 +41,32 @@ def get_las_bounds_wkt(las_file):
         max_x, max_y = las.header.maxs[0], las.header.maxs[1]
     return wkt_dumps(box(min_x, min_y, max_x, max_y))
 
+def build_strip_chunk_tasks(strip_path, chunks, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs):
+    return [
+        (strip_path, (strip_path, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
+        for chunk in chunks
+    ]
+
+
+def process_chunk_with_provenance(task):
+    strip_path, chunk_args = task
+    processed_chunk = process_chunk(*chunk_args)
+    return strip_path, processed_chunk
+
+
+def group_chunks_by_strip(processed_results):
+    grouped = {}
+    for strip_path, chunk_file in processed_results:
+        if chunk_file:
+            grouped.setdefault(strip_path, []).append(chunk_file)
+    return grouped
+
+
+def merge_chunks_for_strip(strip_output_name, strip_chunks, strips_dir):
+    strip_output_file = os.path.join(strips_dir, f"processed_strip_{strip_output_name}.las")
+    return merge_chunks_to_strip(strip_chunks, strip_output_file)
+
+
 def plot_target_and_footprints(target_gdf, matched_las_paths, las_footprint_dir, output_path):
     fig, ax = plt.subplots(figsize=(10, 10))
 
@@ -166,6 +192,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
 
     print("\nProcessing LAS files in chunks...")
     start = time.time()
+    processed_strips_by_target = {}
 
     for target_fp, las_files in tqdm(las_dict.items(), desc="Processing target areas", unit="area"):
         if not las_files:
@@ -193,6 +220,10 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         os.makedirs(strips_dir, exist_ok=True)
 
         target_geom_wkt = None
+        strip_chunk_counts = {}
+        all_strip_tasks = []
+
+        print(f"Input strips for {target_fp}: {len(las_files)}")
 
         for input_file in las_files:
             if not is_utm_crs(input_file):
@@ -220,25 +251,58 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 max_z = np.max(all_z)
                 min_z = np.min(all_z)
 
-            process_args = [
-                (input_file, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs)
-                for chunk in chunks
-            ]
+            strip_tasks = build_strip_chunk_tasks(
+                strip_path=input_file,
+                chunks=chunks,
+                temp_dir=temp_dir,
+                max_z=max_z,
+                min_z=min_z,
+                sor_knn=sor_knn,
+                sor_multiplier=sor_multiplier,
+                ref_scale=ref_scale,
+                ref_offset=ref_offset,
+                ref_crs=ref_crs,
+            )
+            strip_path = input_file
+            strip_chunk_counts[strip_path] = len(strip_tasks)
+            all_strip_tasks.extend(strip_tasks)
 
-            strip_chunks = []
-            with tqdm(total=len(process_args), desc=f"Processing {os.path.basename(input_file)}", unit="chunk") as pbar:
-                with Pool(processes=num_workers) as pool:
-                    for processed_chunk in pool.imap_unordered(process_chunk_wrapper, process_args):
-                        if processed_chunk:
-                            strip_chunks.append(processed_chunk)
-                            processed_chunks.append(processed_chunk)
-                        pbar.update(1)
+        strip_output_name_by_path = {
+            strip_path: f"{idx:03d}_{os.path.splitext(os.path.basename(strip_path))[0]}"
+            for idx, strip_path in enumerate(strip_chunk_counts.keys(), start=1)
+        }
 
-            if strip_chunks:
-                strip_name = os.path.splitext(os.path.basename(input_file))[0]
-                strip_output_file = os.path.join(strips_dir, f"{strip_name}_strip.las")
-                merge_chunks_to_strip(strip_chunks, strip_output_file)
+        for strip_path, count in strip_chunk_counts.items():
+            print(f"Chunks created for strip {os.path.basename(strip_path)}: {count}")
+
+        processed_results = []
+        with tqdm(total=len(all_strip_tasks), desc=f"Processing {target_fp}", unit="chunk") as pbar:
+            with Pool(processes=num_workers) as pool:
+                for result in pool.imap_unordered(process_chunk_with_provenance, all_strip_tasks):
+                    processed_results.append(result)
+                    pbar.update(1)
+
+        chunks_by_strip = group_chunks_by_strip(processed_results)
+
+        processed_strip_files = []
+        for strip_path, strip_chunks in chunks_by_strip.items():
+            print(f"Processed chunks for strip {os.path.basename(strip_path)}: {len(strip_chunks)}")
+            processed_chunks.extend(strip_chunks)
+            strip_output_file = merge_chunks_for_strip(strip_output_name_by_path[strip_path], strip_chunks, strips_dir)
+            if strip_output_file:
+                processed_strip_files.append(strip_output_file)
                 print(f"Saved strip-level LAS: {strip_output_file}")
+
+        if len(processed_strip_files) != len(las_files):
+            missing = set(las_files) - set(chunks_by_strip.keys())
+            if missing:
+                missing_names = sorted(os.path.basename(path) for path in missing)
+                print(f"Strips with zero valid points (no merged output): {missing_names}")
+            print(f"Sanity check: input strips={len(las_files)}, merged strip outputs={len(processed_strip_files)}")
+        else:
+            print(f"Sanity check passed: input strips={len(las_files)}, merged strip outputs={len(processed_strip_files)}")
+
+        processed_strips_by_target[target_fp] = processed_strip_files
 
         if processed_chunks:
             merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
@@ -254,6 +318,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             os.rmdir(target_fp_dir)
 
     print(f"\nProcessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.")
+    return processed_strips_by_target
 
 
 def preprocess_all(conf):
