@@ -35,6 +35,13 @@ def process_chunk_wrapper(args):
     return process_chunk(*args)
 
 
+def has_points(las_file):
+    try:
+        return laspy.open(las_file).header.point_count > 0
+    except Exception:
+        return False
+
+
 def get_las_bounds_wkt(las_file):
     with laspy.open(las_file) as las:
         min_x, min_y = las.header.mins[0], las.header.mins[1]
@@ -307,8 +314,12 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             processed_strips_by_target[target_fp] = processed_strip_files
 
             if processed_strip_files:
-                merge_and_crop_chunks(processed_strip_files, target_geom_wkt, final_output_file)
-                print(f"Final processed LAS file saved: {final_output_file}")
+                merge_chunks_to_strip(processed_strip_files, final_output_file)
+                if has_points(final_output_file):
+                    print(f"Final processed LAS file saved: {final_output_file}")
+                else:
+                    os.remove(final_output_file)
+                    print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
             else:
                 print(f"No processed strips available for {target_fp}.")
 
@@ -342,6 +353,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
 
             if gdf.crs.to_epsg() != ref_crs:
                 gdf = gdf.to_crs(epsg=ref_crs)
+            target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
 
             strip_geom_wkt = get_las_bounds_wkt(input_file)
             strip_geom = wkt_loads(strip_geom_wkt)
@@ -423,7 +435,11 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
 
         if processed_chunks:
             merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
-            print(f"Final processed LAS file saved: {final_output_file}")
+            if has_points(final_output_file):
+                print(f"Final processed LAS file saved: {final_output_file}")
+            else:
+                os.remove(final_output_file)
+                print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
         else:
             print(f"No processed chunks available for {target_fp}.")
 
