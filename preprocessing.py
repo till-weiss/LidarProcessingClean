@@ -64,7 +64,7 @@ def process_chunk_with_provenance(task):
 def group_chunks_by_strip(processed_results):
     grouped = {}
     for strip_path, chunk_file in processed_results:
-        if chunk_file:
+        if chunk_file and has_points(chunk_file):
             grouped.setdefault(strip_path, []).append(chunk_file)
     return grouped
 
@@ -253,14 +253,24 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir, 
             continue
 
         points_after = laspy.open(processed_strip_chunk).header.point_count
+        if points_after == 0:
+            print(f"[WARN] Strip produced zero points after processing and is skipped: {strip_input}")
+            if os.path.exists(processed_strip_chunk):
+                os.remove(processed_strip_chunk)
+            continue
+
         strip_output_file = merge_chunks_to_strip([processed_strip_chunk], output_strip, crop_geom_wkt=wkt_dumps(process_geom))
         if not strip_output_file:
             print(f"[WARN] Failed to write processed strip output: {output_strip}")
             continue
         if os.path.exists(processed_strip_chunk):
             os.remove(processed_strip_chunk)
-        processed_strip_files.append(strip_output_file)
-        print(f"Processed strip (AOI-clipped) | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {strip_output_file}")
+        if has_points(strip_output_file):
+            processed_strip_files.append(strip_output_file)
+            print(f"Processed strip (AOI-clipped) | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {strip_output_file}")
+        else:
+            os.remove(strip_output_file)
+            print(f"[WARN] Processed strip output is empty and was removed: {strip_output_file}")
 
     if len(processed_strip_files) != len(strip_files):
         print(f"Sanity check: input strips={len(strip_files)}, processed strips={len(processed_strip_files)}")
@@ -288,8 +298,11 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.las")
 
         if os.path.exists(final_output_file):
-            print(f"Skipping {target_fp}: Already processed.")
-            continue
+            if has_points(final_output_file):
+                print(f"Skipping {target_fp}: Already processed.")
+                continue
+            os.remove(final_output_file)
+            print(f"[WARN] Existing output was empty and will be reprocessed: {final_output_file}")
 
         footprint_path = os.path.join(target_footprint_dir, target_fp if target_fp.endswith('.gpkg') else f"{target_fp}.gpkg")
         if not os.path.exists(footprint_path):
@@ -418,9 +431,12 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 strips_dir,
                 crop_geom_wkt=strip_crop_wkt_by_path[strip_path],
             )
-            if strip_output_file:
+            if strip_output_file and has_points(strip_output_file):
                 processed_strip_files.append(strip_output_file)
                 print(f"Saved strip-level LAS: {strip_output_file}")
+            elif strip_output_file and os.path.exists(strip_output_file):
+                os.remove(strip_output_file)
+                print(f"[WARN] Strip-level output was empty and removed: {strip_output_file}")
 
         if len(processed_strip_files) != len(las_files):
             missing = set(las_files) - set(chunks_by_strip.keys())
