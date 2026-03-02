@@ -63,7 +63,7 @@ def group_chunks_by_strip(processed_results):
 
 
 def merge_chunks_for_strip(strip_output_name, strip_chunks, strips_dir):
-    strip_output_file = os.path.join(strips_dir, f"processed_strip_{strip_output_name}.las")
+    strip_output_file = os.path.join(strips_dir, f"processed_strip_{strip_output_name}.laz")
     return merge_chunks_to_strip(strip_chunks, strip_output_file)
 
 
@@ -246,9 +246,14 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir, 
             continue
 
         points_after = laspy.open(processed_strip_chunk).header.point_count
-        os.replace(processed_strip_chunk, output_strip)
-        processed_strip_files.append(output_strip)
-        print(f"Processed strip (AOI-clipped) | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {output_strip}")
+        strip_output_file = merge_chunks_to_strip([processed_strip_chunk], output_strip)
+        if not strip_output_file:
+            print(f"[WARN] Failed to write processed strip output: {output_strip}")
+            continue
+        if os.path.exists(processed_strip_chunk):
+            os.remove(processed_strip_chunk)
+        processed_strip_files.append(strip_output_file)
+        print(f"Processed strip (AOI-clipped) | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {strip_output_file}")
 
     if len(processed_strip_files) != len(strip_files):
         print(f"Sanity check: input strips={len(strip_files)}, processed strips={len(processed_strip_files)}")
@@ -338,7 +343,13 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 gdf = gdf.to_crs(epsg=ref_crs)
 
             strip_geom_wkt = get_las_bounds_wkt(input_file)
-            chunks = create_chunks_from_wkt(strip_geom_wkt, chunk_size)
+            strip_geom = wkt_loads(strip_geom_wkt)
+            target_geom = wkt_loads(target_geom_wkt)
+            process_geom = target_geom.intersection(strip_geom)
+            if process_geom.is_empty:
+                print(f"[WARN] Strip does not intersect AOI and is skipped: {input_file}")
+                continue
+            chunks = create_chunks_from_wkt(wkt_dumps(process_geom), chunk_size)
 
             if max_elev:
                 all_z = laspy.read(input_file).z
