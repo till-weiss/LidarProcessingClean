@@ -62,9 +62,9 @@ def group_chunks_by_strip(processed_results):
     return grouped
 
 
-def merge_chunks_for_strip(strip_output_name, strip_chunks, strips_dir):
+def merge_chunks_for_strip(strip_output_name, strip_chunks, strips_dir, crop_geom_wkt):
     strip_output_file = os.path.join(strips_dir, f"processed_strip_{strip_output_name}.laz")
-    return merge_chunks_to_strip(strip_chunks, strip_output_file)
+    return merge_chunks_to_strip(strip_chunks, strip_output_file, crop_geom_wkt=crop_geom_wkt)
 
 
 def plot_target_and_footprints(target_gdf, matched_las_paths, las_footprint_dir, output_path):
@@ -246,7 +246,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir, 
             continue
 
         points_after = laspy.open(processed_strip_chunk).header.point_count
-        strip_output_file = merge_chunks_to_strip([processed_strip_chunk], output_strip)
+        strip_output_file = merge_chunks_to_strip([processed_strip_chunk], output_strip, crop_geom_wkt=wkt_dumps(process_geom))
         if not strip_output_file:
             print(f"[WARN] Failed to write processed strip output: {output_strip}")
             continue
@@ -326,6 +326,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
 
         strip_chunk_counts = {}
         all_strip_tasks = []
+        strip_crop_wkt_by_path = {}
 
         print(f"Input strips for {target_fp}: {len(las_files)}")
 
@@ -349,7 +350,9 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             if process_geom.is_empty:
                 print(f"[WARN] Strip does not intersect AOI and is skipped: {input_file}")
                 continue
-            chunks = create_chunks_from_wkt(wkt_dumps(process_geom), chunk_size)
+            process_geom_wkt = wkt_dumps(process_geom)
+            strip_crop_wkt_by_path[input_file] = process_geom_wkt
+            chunks = create_chunks_from_wkt(process_geom_wkt, chunk_size)
 
             if max_elev:
                 all_z = laspy.read(input_file).z
@@ -397,7 +400,12 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         for strip_path, strip_chunks in chunks_by_strip.items():
             print(f"Processed chunks for strip {os.path.basename(strip_path)}: {len(strip_chunks)}")
             processed_chunks.extend(strip_chunks)
-            strip_output_file = merge_chunks_for_strip(strip_output_name_by_path[strip_path], strip_chunks, strips_dir)
+            strip_output_file = merge_chunks_for_strip(
+                strip_output_name_by_path[strip_path],
+                strip_chunks,
+                strips_dir,
+                crop_geom_wkt=strip_crop_wkt_by_path[strip_path],
+            )
             if strip_output_file:
                 processed_strip_files.append(strip_output_file)
                 print(f"Saved strip-level LAS: {strip_output_file}")

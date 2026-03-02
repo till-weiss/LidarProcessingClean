@@ -126,10 +126,12 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
         return None
 
 
-def merge_chunks_to_strip(chunk_files, output_file):
-    """Merge processed chunks into a single strip-level LAS/LAZ file."""
+def merge_chunks_to_strip(chunk_files, output_file, crop_geom_wkt=None):
+    """Merge processed chunks into a single strip-level LAS/LAZ file, optionally AOI-cropped."""
     pipeline = [{"type": "readers.las", "filename": f} for f in chunk_files]
     pipeline.append({"type": "filters.merge"})
+    if crop_geom_wkt:
+        pipeline.append({"type": "filters.crop", "polygon": crop_geom_wkt})
 
     writer = {"type": "writers.las", "filename": output_file}
     if output_file.lower().endswith(".laz"):
