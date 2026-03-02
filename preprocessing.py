@@ -185,7 +185,72 @@ def match_footprints(target_footprint_dir, las_footprint_dir, las_file_dir, out_
     return target_dict
 
 
-def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_dir, max_elev, sor_knn, sor_multiplier, num_workers, chunk_size=1000):
+
+
+def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
+    """Process each strip end-to-end without chunking and preserve strip identity."""
+    processed_strips_dir = os.path.join(run_merged_dir, target_fp, "processed_strips")
+    os.makedirs(processed_strips_dir, exist_ok=True)
+
+    processed_strip_files = []
+    print(f"Input strips for {target_fp}: {len(strip_files)}")
+
+    for input_file in strip_files:
+        strip_input = input_file
+        if not is_utm_crs(strip_input):
+            base_name = os.path.basename(strip_input)
+            base_name = base_name.replace('.las', '_utm.las').replace('.laz', '_utm.las')
+            utm_output_file = os.path.join(temp_dir, base_name)
+            strip_input = reproject_las(strip_input, utm_output_file)
+
+        ref_scale, ref_offset, ref_crs = get_las_header(strip_input)
+        strip_geom_wkt = get_las_bounds_wkt(strip_input)
+        strip_bbox = wkt_loads(strip_geom_wkt)
+
+        if config.max_elevation_threshold:
+            all_z = laspy.read(strip_input).z
+            max_z = np.quantile(all_z, config.max_elevation_threshold)
+            min_z = np.quantile(all_z, 1 - config.max_elevation_threshold)
+        else:
+            all_z = laspy.read(strip_input).z
+            max_z = np.max(all_z)
+            min_z = np.min(all_z)
+
+        points_before = laspy.open(strip_input).header.point_count
+        processed_strip_chunk = process_chunk(
+            strip_input,
+            strip_bbox,
+            temp_dir,
+            max_z,
+            min_z,
+            config.knn,
+            config.multiplier,
+            ref_scale,
+            ref_offset,
+            ref_crs,
+        )
+
+        strip_name = os.path.splitext(os.path.basename(strip_input))[0]
+        output_strip = os.path.join(processed_strips_dir, f"{strip_name}_processed.las")
+
+        if not processed_strip_chunk or not os.path.exists(processed_strip_chunk):
+            print(f"[WARN] Strip produced no valid points and is skipped: {strip_input}")
+            continue
+
+        points_after = laspy.open(processed_strip_chunk).header.point_count
+        os.replace(processed_strip_chunk, output_strip)
+        processed_strip_files.append(output_strip)
+        print(f"Processed strip | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {output_strip}")
+
+    if len(processed_strip_files) != len(strip_files):
+        print(f"Sanity check: input strips={len(strip_files)}, processed strips={len(processed_strip_files)}")
+    else:
+        print(f"Sanity check passed: input strips={len(strip_files)}, processed strips={len(processed_strip_files)}")
+
+    return processed_strip_files
+
+
+def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_dir, max_elev, sor_knn, sor_multiplier, num_workers, chunk_size=1000, preprocess_use_chunks=True):
 
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
@@ -215,11 +280,36 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
         os.makedirs(temp_dir, exist_ok=True)
 
+        target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
+
+        if not preprocess_use_chunks:
+            processed_strip_files = preprocess_window(
+                strip_files=las_files,
+                config=config,
+                target_fp=target_fp,
+                run_merged_dir=run_merged_dir,
+                temp_dir=temp_dir,
+            )
+            processed_strips_by_target[target_fp] = processed_strip_files
+
+            if processed_strip_files:
+                merge_and_crop_chunks(processed_strip_files, target_geom_wkt, final_output_file)
+                print(f"Final processed LAS file saved: {final_output_file}")
+            else:
+                print(f"No processed strips available for {target_fp}.")
+
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+            target_fp_dir = os.path.join(run_merged_dir, target_fp)
+            if os.path.isdir(target_fp_dir) and not os.listdir(target_fp_dir):
+                os.rmdir(target_fp_dir)
+            continue
+
         processed_chunks = []
         strips_dir = os.path.join(run_merged_dir, target_fp, "strips")
         os.makedirs(strips_dir, exist_ok=True)
 
-        target_geom_wkt = None
         strip_chunk_counts = {}
         all_strip_tasks = []
 
@@ -238,7 +328,6 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             if gdf.crs.to_epsg() != ref_crs:
                 gdf = gdf.to_crs(epsg=ref_crs)
 
-            target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
             strip_geom_wkt = get_las_bounds_wkt(input_file)
             chunks = create_chunks_from_wkt(strip_geom_wkt, chunk_size)
 
@@ -368,7 +457,8 @@ def preprocess_all(conf):
         sor_multiplier=config.multiplier,
         num_workers=config.num_workers,
         run_name=run_name,
-        chunk_size=config.chunk_size
+        chunk_size=config.chunk_size,
+        preprocess_use_chunks=config.preprocess_use_chunks,
     )
 
     print(f"\nPreprocessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.\n")
