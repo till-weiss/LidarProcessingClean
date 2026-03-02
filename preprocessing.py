@@ -187,8 +187,8 @@ def match_footprints(target_footprint_dir, las_footprint_dir, las_file_dir, out_
 
 
 
-def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
-    """Process each strip end-to-end without chunking and preserve strip identity."""
+def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir, target_gdf):
+    """Process each strip clipped to AOI and preserve strip identity."""
     processed_strips_dir = os.path.join(run_merged_dir, target_fp, "processed_strips")
     os.makedirs(processed_strips_dir, exist_ok=True)
 
@@ -204,8 +204,16 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
             strip_input = reproject_las(strip_input, utm_output_file)
 
         ref_scale, ref_offset, ref_crs = get_las_header(strip_input)
+        target_proj_gdf = target_gdf.to_crs(epsg=ref_crs) if target_gdf.crs.to_epsg() != ref_crs else target_gdf
+        target_geom = shape(target_proj_gdf.geometry.iloc[0])
+
         strip_geom_wkt = get_las_bounds_wkt(strip_input)
-        strip_bbox = wkt_loads(strip_geom_wkt)
+        strip_geom = wkt_loads(strip_geom_wkt)
+        process_geom = target_geom.intersection(strip_geom)
+
+        if process_geom.is_empty:
+            print(f"[WARN] Strip does not intersect AOI and is skipped: {strip_input}")
+            continue
 
         if config.max_elevation_threshold:
             all_z = laspy.read(strip_input).z
@@ -219,7 +227,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
         points_before = laspy.open(strip_input).header.point_count
         processed_strip_chunk = process_chunk(
             strip_input,
-            strip_bbox,
+            process_geom,
             temp_dir,
             max_z,
             min_z,
@@ -231,7 +239,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
         )
 
         strip_name = os.path.splitext(os.path.basename(strip_input))[0]
-        output_strip = os.path.join(processed_strips_dir, f"{strip_name}_processed.las")
+        output_strip = os.path.join(processed_strips_dir, f"{strip_name}_processed.laz")
 
         if not processed_strip_chunk or not os.path.exists(processed_strip_chunk):
             print(f"[WARN] Strip produced no valid points and is skipped: {strip_input}")
@@ -240,7 +248,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, temp_dir):
         points_after = laspy.open(processed_strip_chunk).header.point_count
         os.replace(processed_strip_chunk, output_strip)
         processed_strip_files.append(output_strip)
-        print(f"Processed strip | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {output_strip}")
+        print(f"Processed strip (AOI-clipped) | input: {strip_input} | points before: {points_before} | points after: {points_after} | output: {output_strip}")
 
     if len(processed_strip_files) != len(strip_files):
         print(f"Sanity check: input strips={len(strip_files)}, processed strips={len(processed_strip_files)}")
@@ -289,6 +297,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 target_fp=target_fp,
                 run_merged_dir=run_merged_dir,
                 temp_dir=temp_dir,
+                target_gdf=gdf,
             )
             processed_strips_by_target[target_fp] = processed_strip_files
 
