@@ -32,6 +32,12 @@ def _as_point_cloud(points: np.ndarray):
     point_cloud.points = o3d.utility.Vector3dVector(points)
     return point_cloud
 
+
+
+def _aligned_output_path(aligned_dir: str, strip_path: str) -> str:
+    base, ext = os.path.splitext(os.path.basename(strip_path))
+    return os.path.join(aligned_dir, f"{base}_aligned{ext}")
+
 def _read_las_points(las_path: str) -> np.ndarray:
     with laspy.open(las_path) as fh:
         las = fh.read()
@@ -234,7 +240,7 @@ def align_strips_incremental(
 
     # 1) First strip = reference
     first_strip = strip_paths[0]
-    first_out = os.path.join(aligned_dir, os.path.basename(first_strip))
+    first_out = _aligned_output_path(aligned_dir, first_strip)
     shutil.copy2(first_strip, first_out)
     aligned_paths.append(first_out)
 
@@ -247,7 +253,7 @@ def align_strips_incremental(
         tgt_num = i
         pair_id = f"strip{src_num:02d}_to_strip{tgt_num:02d}"
 
-        out_path = os.path.join(aligned_dir, os.path.basename(src_path))
+        out_path = _aligned_output_path(aligned_dir, src_path)
 
         try:
             src_xyz = _read_las_points(src_path)
