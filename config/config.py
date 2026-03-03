@@ -107,6 +107,20 @@ class Configuration:
         self.icp_min_overlap_points = 5000
         self.icp_min_fitness = 0.2
         self.icp_max_translation_m = 50.0
+        self.icp_max_median_z_diff_m = 10.0
+
+        self.icp_smrf_slope = 0.2
+        self.icp_smrf_window = 16.0
+        self.icp_smrf_threshold = 0.45
+        self.icp_smrf_scalar = 1.2
+        self.icp_min_ground_points = 50000
+        self.icp_ground_use_outlier = False
+        self.icp_ground_outlier_mean_k = 8
+        self.icp_ground_outlier_multiplier = 2.0
+
+        self.icp_cluster_tolerance_m = 2.0
+        self.icp_cluster_min_points = 1000
+        self.icp_cluster_z_window_m = 0.0
 
         # Set overall GDAL settings
         gdal.UseExceptions()  # Enable exceptions instead of silent failures

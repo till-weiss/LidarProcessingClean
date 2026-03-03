@@ -2,13 +2,12 @@ import json
 import logging
 import os
 import shutil
-import subprocess
-import tempfile
-from typing import List, Literal, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 import laspy
 import numpy as np
-from datetime import datetime
+
 
 def _get_aoi_name(config) -> str:
     return str(getattr(config, "icp_current_aoi_name", "unknown_aoi"))
@@ -25,6 +24,7 @@ def _ensure_dirs(config) -> Tuple[str, str, str]:
     os.makedirs(log_dir, exist_ok=True)
     return aligned_dir, inter_dir, log_dir
 
+
 def _as_point_cloud(points: np.ndarray):
     import open3d as o3d
 
@@ -33,10 +33,10 @@ def _as_point_cloud(points: np.ndarray):
     return point_cloud
 
 
-
 def _aligned_output_path(aligned_dir: str, strip_path: str) -> str:
     base, ext = os.path.splitext(os.path.basename(strip_path))
     return os.path.join(aligned_dir, f"{base}_aligned{ext}")
+
 
 def _read_las_points(las_path: str) -> np.ndarray:
     with laspy.open(las_path) as fh:
@@ -45,7 +45,6 @@ def _read_las_points(las_path: str) -> np.ndarray:
 
 
 def extract_overlap_area(strip_a_points: np.ndarray, strip_b_points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Extract overlap in XY bounding boxes for two point sets."""
     if strip_a_points.size == 0 or strip_b_points.size == 0:
         return np.empty((0, 3)), np.empty((0, 3))
 
@@ -75,7 +74,6 @@ def extract_overlap_area(strip_a_points: np.ndarray, strip_b_points: np.ndarray)
 
     return strip_a_points[a_mask], strip_b_points[b_mask]
 
-from typing import Dict, Tuple, Optional
 
 def run_icp(
     source_xyz: np.ndarray,
@@ -83,7 +81,6 @@ def run_icp(
     config,
     logger: Optional[logging.Logger] = None,
 ) -> Tuple[np.ndarray, float, float]:
-    """Run rigid ICP once (Open3D handles convergence internally)."""
     import open3d as o3d
 
     max_iter = int(getattr(config, "icp_max_iterations", 50))
@@ -130,24 +127,16 @@ def run_icp(
 
     return transform, fitness, rmse
 
-def apply_rigid_transform_to_las(
-    input_path: str,
-    transform_4x4: np.ndarray,
-    output_path: str,
-) -> None:
-    """
-    Apply a 4x4 rigid transform to LAS/LAZ XYZ while preserving all other attributes.
-    """
+
+def apply_rigid_transform_to_las(input_path: str, transform_4x4: np.ndarray, output_path: str) -> None:
     transform_4x4 = np.asarray(transform_4x4, dtype=np.float64)
     if transform_4x4.shape != (4, 4):
         raise ValueError("transform_4x4 must be a (4, 4) matrix")
 
     las = laspy.read(input_path)
-
     xyz = np.column_stack((las.x, las.y, las.z)).astype(np.float64)
     ones = np.ones((xyz.shape[0], 1), dtype=np.float64)
     xyz_h = np.hstack((xyz, ones))
-
     xyz_t = (transform_4x4 @ xyz_h.T).T[:, :3]
 
     las.x = xyz_t[:, 0]
@@ -157,6 +146,7 @@ def apply_rigid_transform_to_las(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     las.write(output_path)
 
+
 def save_icp_log_for_pair(
     config,
     pair_id: str,
@@ -164,68 +154,43 @@ def save_icp_log_for_pair(
     fitness: float,
     rmse: float,
     metadata: dict | None = None,
-    save_matrix_npy: bool = True,
 ) -> str:
-    """
-    Save ICP results for a strip-pair using repo folder conventions.
-
-    Returns:
-        Path to the JSON log file.
-    """
-    _, _, log_dir = _ensure_dirs(config)
+    _, _, _ = _ensure_dirs(config)
 
     transform = np.asarray(transform, dtype=np.float64)
     if transform.shape != (4, 4):
         raise ValueError("Transform must be a 4x4 matrix.")
 
-    os.makedirs(log_dir, exist_ok=True)
+    run_name = str(getattr(config, "run_name", "default_run"))
+    run_log_dir = os.path.join(config.results_dir, "icp_logs", run_name)
+    os.makedirs(run_log_dir, exist_ok=True)
 
-    json_path = os.path.join(log_dir, f"{pair_id}.json")
-    npy_path = os.path.join(log_dir, f"{pair_id}.npy")
+    jsonl_path = os.path.join(run_log_dir, f"{_get_aoi_name(config)}_icp_summary.jsonl")
 
     log_data = {
         "timestamp_utc": datetime.utcnow().isoformat(),
         "aoi": _get_aoi_name(config),
-        "run_name": str(getattr(config, "run_name", "default_run")),
+        "run_name": run_name,
         "pair_id": pair_id,
         "fitness": float(fitness),
         "rmse": float(rmse),
         "transformation_matrix": transform.tolist(),
     }
-
     if metadata:
         log_data["metadata"] = metadata
 
-    with open(json_path, "w") as f:
-        json.dump(log_data, f, indent=2)
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(log_data) + "\n")
 
-    if save_matrix_npy:
-        np.save(npy_path, transform)
-
-    return json_path
-
-from typing import List, Tuple, Optional
-import os
-import shutil
-import numpy as np
+    return jsonl_path
 
 
 def align_strips_incremental(
     strip_paths: List[str],
     config,
     logger: Optional[logging.Logger] = None,
+    icp_ready_paths: Optional[List[str]] = None,
 ) -> List[str]:
-    """
-    Very simple incremental ICP strip alignment.
-
-    - First strip copied unchanged.
-    - Each next strip aligned to previous aligned strip.
-    - Optional XY overlap crop.
-    - Single ICP run.
-    - Accept/reject based on fitness + translation magnitude.
-    - Saves JSON log per pair (no .npy).
-    """
-
     if not strip_paths:
         return []
 
@@ -235,36 +200,44 @@ def align_strips_incremental(
     min_overlap_points = int(getattr(config, "icp_min_overlap_points", 5000))
     min_fitness = float(getattr(config, "icp_min_fitness", 0.2))
     max_translation_m = float(getattr(config, "icp_max_translation_m", 50.0))
+    max_median_z_diff_m = float(getattr(config, "icp_max_median_z_diff_m", 10.0))
+
+    icp_input_by_strip = {}
+    if icp_ready_paths and len(icp_ready_paths) == len(strip_paths):
+        icp_input_by_strip = dict(zip(strip_paths, icp_ready_paths))
 
     aligned_paths = []
-
-    # 1) First strip = reference
     first_strip = strip_paths[0]
     first_out = _aligned_output_path(aligned_dir, first_strip)
     shutil.copy2(first_strip, first_out)
     aligned_paths.append(first_out)
 
-    # 2) Align remaining strips
     for i in range(1, len(strip_paths)):
         src_path = strip_paths[i]
         tgt_path = aligned_paths[i - 1]
-
-        src_num = i + 1
-        tgt_num = i
-        pair_id = f"strip{src_num:02d}_to_strip{tgt_num:02d}"
-
+        pair_id = f"strip{i + 1:02d}_to_strip{i:02d}"
         out_path = _aligned_output_path(aligned_dir, src_path)
 
         try:
-            src_xyz = _read_las_points(src_path)
-            tgt_xyz = _read_las_points(tgt_path)
+            src_icp_path = icp_input_by_strip.get(src_path, src_path)
+            tgt_icp_path = icp_input_by_strip.get(strip_paths[i - 1], tgt_path)
 
+            msg = (
+                f"ICP correspondence uses icp-ready strips | source={src_icp_path} "
+                f"target={tgt_icp_path}; transform applied to full strip={src_path}"
+            )
+            if logger:
+                logger.info(msg)
+            else:
+                print(msg)
+
+            src_xyz = _read_las_points(src_icp_path)
+            tgt_xyz = _read_las_points(tgt_icp_path)
             if src_xyz.size == 0 or tgt_xyz.size == 0:
                 shutil.copy2(src_path, out_path)
                 aligned_paths.append(out_path)
                 continue
 
-            # Optional overlap crop
             if use_overlap_crop:
                 src_est, tgt_est = extract_overlap_area(src_xyz, tgt_xyz)
                 if min(len(src_est), len(tgt_est)) < min_overlap_points:
@@ -274,18 +247,17 @@ def align_strips_incremental(
             else:
                 src_est, tgt_est = src_xyz, tgt_xyz
 
-            # Run ICP
-            transform, fitness, rmse = run_icp(src_est, tgt_est, config)
-
+            transform, fitness, rmse = run_icp(src_est, tgt_est, config, logger=logger)
             translation_m = float(np.linalg.norm(transform[:3, 3]))
+            median_z_diff = float(abs(np.median(src_est[:, 2]) - np.median(tgt_est[:, 2])))
 
             accepted = (
                 fitness >= min_fitness
                 and translation_m <= max_translation_m
+                and median_z_diff <= max_median_z_diff_m
             )
 
-            # Save JSON log
-            save_icp_log_for_pair(
+            summary_path = save_icp_log_for_pair(
                 config=config,
                 pair_id=pair_id,
                 transform=transform,
@@ -294,27 +266,43 @@ def align_strips_incremental(
                 metadata={
                     "source": os.path.abspath(src_path),
                     "target": os.path.abspath(tgt_path),
+                    "source_icp": os.path.abspath(src_icp_path),
+                    "target_icp": os.path.abspath(tgt_icp_path),
                     "accepted": accepted,
                     "translation_m": translation_m,
                     "used_overlap_crop": use_overlap_crop,
                     "n_source_icp": int(len(src_est)),
                     "n_target_icp": int(len(tgt_est)),
+                    "median_z_diff_m": median_z_diff,
                 },
-                save_matrix_npy=False,  # <- disabled
             )
+            if logger:
+                logger.info("ICP summary appended: %s", summary_path)
+            else:
+                print(f"ICP summary appended: {summary_path}")
 
             if not accepted:
+                if median_z_diff > max_median_z_diff_m:
+                    warn_msg = (
+                        f"ICP auto-reject {pair_id}: possible vertical datum mismatch / bad ICP input "
+                        f"(median_z_diff_m={median_z_diff:.3f} > {max_median_z_diff_m:.3f})"
+                    )
+                    if logger:
+                        logger.warning(warn_msg)
+                    else:
+                        print(warn_msg)
                 shutil.copy2(src_path, out_path)
                 aligned_paths.append(out_path)
                 continue
 
-            # Apply transform to full strip
             apply_rigid_transform_to_las(src_path, transform, out_path)
             aligned_paths.append(out_path)
 
         except Exception as e:
             if logger:
                 logger.error("ICP failed for %s: %s", pair_id, e)
+            else:
+                print(f"ICP failed for {pair_id}: {e}")
             shutil.copy2(src_path, out_path)
             aligned_paths.append(out_path)
 
