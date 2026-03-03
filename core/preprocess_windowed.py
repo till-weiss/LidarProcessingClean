@@ -125,6 +125,26 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
         print(f"Error merging and cropping: {e}")
         return None
 
+
+def merge_chunks_to_strip(chunk_files, output_file, crop_geom_wkt=None):
+    """Merge processed chunks into a single strip-level LAS/LAZ file, optionally AOI-cropped."""
+    pipeline = [{"type": "readers.las", "filename": f} for f in chunk_files]
+    pipeline.append({"type": "filters.merge"})
+    if crop_geom_wkt:
+        pipeline.append({"type": "filters.crop", "polygon": crop_geom_wkt})
+
+    writer = {"type": "writers.las", "filename": output_file}
+    if output_file.lower().endswith(".laz"):
+        writer["compression"] = "laszip"
+    pipeline.append(writer)
+
+    try:
+        pdal.pipeline.Pipeline(json.dumps(pipeline)).execute()
+        return output_file
+    except Exception as e:
+        print(f"Error merging chunks to strip {output_file}: {e}")
+        return None
+
 def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0):
     """Process multiple LAS files for different target areas."""
     os.makedirs(preprocessed_dir, exist_ok=True)

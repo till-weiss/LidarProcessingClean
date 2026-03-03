@@ -205,7 +205,7 @@ class LidarProcessing(App):
             ],
             "Advanced Settings": [
                 "overlap", "filter_date", "start_date", "end_date",
-                "chunk_size", "chunk_overlap", "num_workers",
+                "preprocess_use_chunks", "chunk_size", "chunk_overlap", "num_workers",
             ],
         }
 
