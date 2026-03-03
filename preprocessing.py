@@ -19,13 +19,12 @@ from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, merge_chunks_to_strip
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
-from core.icp_alignment import align_strips_incremental
-from core.icp_ready import make_icp_ready_strip
+from core.strip_icp import align_strips_incremental, _make_icp_ready_strip
 
 
 
 
-def build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, config):
+def build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, config, logger=None):
     icp_ready_dir = os.path.join(run_merged_dir, target_fp, "icp_ready_strips")
     os.makedirs(icp_ready_dir, exist_ok=True)
 
@@ -33,7 +32,7 @@ def build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, con
     for processed_strip in processed_strip_files:
         base = os.path.splitext(os.path.basename(processed_strip))[0]
         out_icp_ready = os.path.join(icp_ready_dir, f"{base}_icp_ready.laz")
-        ready_path = make_icp_ready_strip(processed_strip, out_icp_ready, config)
+        ready_path = _make_icp_ready_strip(processed_strip, out_icp_ready, config, logger=logger)
         icp_ready_files.append(ready_path)
 
     return icp_ready_files
