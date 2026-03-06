@@ -108,6 +108,7 @@ class Configuration:
         self.icp_min_fitness = 0.2
         self.icp_max_translation_m = 50.0
         self.icp_max_median_z_diff_m = 10.0
+        self.icp_enforce_qc_thresholds = True
 
         self.icp_smrf_slope = 0.2
         self.icp_smrf_window = 16.0
