@@ -2,6 +2,7 @@ import os
 import time
 import json
 import shutil
+from pathlib import Path
 from datetime import timedelta
 from datetime import datetime
 from multiprocessing import Pool
@@ -33,6 +34,16 @@ def get_las_header(las_file):
 
 def process_chunk_wrapper(args):
     return process_chunk(*args)
+
+
+def get_combined_geom_wkt(gdf):
+    if gdf is None or gdf.empty:
+        return None
+    geom = gdf.geometry.unary_union
+    if geom.is_empty:
+        return None
+    return wkt_dumps(geom)
+
 
 def plot_target_and_footprints(target_gdf, matched_las_paths, las_footprint_dir, output_path):
     fig, ax = plt.subplots(figsize=(10, 10))
@@ -191,8 +202,12 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             )
 
             if processed_strips:
-                target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-                merged = merge_and_crop_chunks(processed_strips, target_geom_wkt, final_output_file)
+                target_geom_wkt = get_combined_geom_wkt(gdf)
+                if not target_geom_wkt:
+                    print(f"Warning: Empty AOI geometry for {target_fp}. Skipping output merge.")
+                    merged = None
+                else:
+                    merged = merge_and_crop_chunks(processed_strips, target_geom_wkt, final_output_file)
                 if merged:
                     print(f"Final processed LAS file saved: {final_output_file}")
                 else:
@@ -279,11 +294,16 @@ def preprocess_all(conf):
     gdfs = os.listdir(config.target_area_dir)
     for gdf in gdfs:
         gdf_path = os.path.join(config.target_area_dir, gdf)
+        if Path(gdf_path).suffix.lower() != ".gpkg":
+            continue
         gdf_loaded = gpd.read_file(gdf_path)
         if len(gdf_loaded) > 1:
             print("\n--- Target areas are multi-geometry. Splitting into separate files ---")
             for gdf_name in os.listdir(config.target_area_dir):
-                split_gpkg(os.path.join(config.target_area_dir, gdf_name), config.target_area_dir, field_name=config.target_name_field)
+                gdf_file = os.path.join(config.target_area_dir, gdf_name)
+                if Path(gdf_file).suffix.lower() != ".gpkg":
+                    continue
+                split_gpkg(gdf_file, config.target_area_dir, field_name=config.target_name_field)
             break
 
     

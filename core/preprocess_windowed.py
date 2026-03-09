@@ -28,6 +28,15 @@ def _cleanup_empty_las(las_path):
         return True
     return False
 
+
+def _get_combined_geom(gdf):
+    if gdf is None or gdf.empty:
+        return None
+    geom = gdf.geometry.unary_union
+    if hasattr(geom, "is_empty") and geom.is_empty:
+        return None
+    return geom
+
 def create_chunks_from_wkt(target_geom_wkt, chunk_size=100):
     """Create grid chunks based on the bounding box of the target geometry."""
     target_geom = wkt_loads(target_geom_wkt)
@@ -160,16 +169,27 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
 
 def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
     processed_dir = os.path.join(run_merged_dir, target_fp, "processed_strips")
+    temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
     os.makedirs(processed_dir, exist_ok=True)
+    os.makedirs(temp_dir, exist_ok=True)
 
     input_count = len(strip_files)
     processed = []
     skipped_no_intersection = 0
     skipped_zero_points = 0
 
+    aoi_source = gdf.copy()
+
     for strip_file in strip_files:
+        strip_input_file = strip_file
+        strip_base_name = os.path.splitext(os.path.basename(strip_file))[0]
+
         try:
-            with laspy.open(strip_file) as las:
+            if not is_utm_crs(strip_input_file):
+                utm_strip = os.path.join(temp_dir, f"{strip_base_name}_utm.las")
+                strip_input_file = reproject_las(strip_input_file, utm_strip)
+
+            with laspy.open(strip_input_file) as las:
                 header = las.header
                 minx, miny, _ = header.mins
                 maxx, maxy, _ = header.maxs
@@ -177,14 +197,20 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
                 ref_scale = header.scales
                 ref_offset = header.offsets
                 ref_crs = strip_crs.to_epsg() if strip_crs else 4979
+                points_before = int(header.point_count)
 
             strip_extent = box(minx, miny, maxx, maxy)
 
-            aoi_gdf = gdf
+            aoi_gdf = aoi_source.copy()
             if aoi_gdf.crs and strip_crs and aoi_gdf.crs != strip_crs:
                 aoi_gdf = aoi_gdf.to_crs(strip_crs)
 
-            aoi_geom = shape(aoi_gdf.geometry.iloc[0])
+            aoi_geom = _get_combined_geom(aoi_gdf)
+            if aoi_geom is None:
+                skipped_no_intersection += 1
+                print(f"Warning: AOI geometry is empty for {target_fp}. Skipping strip {strip_file}.")
+                continue
+
             process_geom = aoi_geom.intersection(strip_extent)
 
             if process_geom.is_empty:
@@ -192,8 +218,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
                 print(f"Warning: No AOI intersection for strip {strip_file}. Skipping.")
                 continue
 
-            strip_name = os.path.splitext(os.path.basename(strip_file))[0]
-            output_path = os.path.join(processed_dir, f"{strip_name}_processed.laz")
+            output_path = os.path.join(processed_dir, f"{strip_base_name}_processed.laz")
 
             hcrs = CRS.from_epsg(ref_crs)
             datum = hcrs.datum.name.lower()
@@ -208,7 +233,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
             out_srs = f"EPSG:{ref_crs}+3855"
 
             pipeline = [
-                {"type": "readers.las", "filename": strip_file},
+                {"type": "readers.las", "filename": strip_input_file},
                 {"type": "filters.reprojection", "in_srs": in_srs, "out_srs": out_srs},
                 {"type": "filters.crop", "polygon": wkt_dumps(process_geom)},
                 {"type": "filters.outlier", "method": "statistical", "mean_k": config.knn},
@@ -226,8 +251,6 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
                 },
             ]
 
-            with laspy.open(strip_file) as in_las:
-                points_before = int(in_las.header.point_count)
             pdal.Pipeline(json.dumps(pipeline)).execute()
 
             if _cleanup_empty_las(output_path):
@@ -237,6 +260,7 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
 
             with laspy.open(output_path) as out_las:
                 points_after = int(out_las.header.point_count)
+
             if points_after == 0:
                 os.remove(output_path)
                 skipped_zero_points += 1
