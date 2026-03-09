@@ -40,6 +40,7 @@ class Configuration:
         # SOR parameters (Statistical Outlier Removal)
         self.knn = 100  # neighbors for stats. 50–200 is common. Higher = stabler but slower.
         self.multiplier = 1  # (mean + m*std). Lower (0.8–1.2) = aggressive; higher (1.5–2.5) = conservative.
+        self.preprocess_use_chunks = True  # True: chunk pipeline; False: per-strip preprocessing preserving strip identity.
 
         # ------- PROCESSING --------
 

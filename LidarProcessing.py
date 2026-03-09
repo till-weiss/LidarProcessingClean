@@ -188,7 +188,7 @@ class LidarProcessing(App):
             ],
             "Preprocessing": [
                 "multiple_targets", "target_name_field",
-                "max_elevation_threshold", "knn", "multiplier",
+                "max_elevation_threshold", "knn", "multiplier", "preprocess_use_chunks",
             ],
             "Processing": [
                 "fill_gaps", "resolution", "point_density_method",

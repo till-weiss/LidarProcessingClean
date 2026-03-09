@@ -16,7 +16,7 @@ from shapely.geometry import shape
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
-from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
+from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, preprocess_window
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
 
@@ -181,6 +181,29 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
         os.makedirs(temp_dir, exist_ok=True)
 
+        if not getattr(config, "preprocess_use_chunks", True):
+            processed_strips = preprocess_window(
+                strip_files=las_files,
+                config=config,
+                target_fp=target_fp,
+                run_merged_dir=run_merged_dir,
+                gdf=gdf,
+            )
+
+            if processed_strips:
+                target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
+                merged = merge_and_crop_chunks(processed_strips, target_geom_wkt, final_output_file)
+                if merged:
+                    print(f"Final processed LAS file saved: {final_output_file}")
+                else:
+                    print(f"Warning: Final merged output for {target_fp} is empty. Skipping output.")
+            else:
+                print(f"No processed strips available for {target_fp}.")
+
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            continue
+
         processed_chunks = []
         process_args = []
 
@@ -223,8 +246,11 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                     pbar.update(1)
 
         if processed_chunks:
-            merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
-            print(f"Final processed LAS file saved: {final_output_file}")
+            merged = merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
+            if merged:
+                print(f"Final processed LAS file saved: {final_output_file}")
+            else:
+                print(f"Warning: Final merged output for {target_fp} is empty. Skipping output.")
         else:
             print(f"No processed chunks available for {target_fp}.")
 

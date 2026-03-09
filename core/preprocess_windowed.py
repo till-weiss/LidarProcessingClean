@@ -11,6 +11,23 @@ from tqdm import tqdm
 
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 
+
+def _is_non_empty_las(las_path):
+    if not las_path or not os.path.exists(las_path):
+        return False
+    try:
+        with laspy.open(las_path) as las:
+            return las.header.point_count > 0
+    except Exception:
+        return False
+
+
+def _cleanup_empty_las(las_path):
+    if las_path and os.path.exists(las_path) and not _is_non_empty_las(las_path):
+        os.remove(las_path)
+        return True
+    return False
+
 def create_chunks_from_wkt(target_geom_wkt, chunk_size=100):
     """Create grid chunks based on the bounding box of the target geometry."""
     target_geom = wkt_loads(target_geom_wkt)
@@ -113,17 +130,136 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
     """Merge processed chunks and crop them to the target geometry."""
     target_geom = wkt_loads(target_geom_wkt)
     
-    pipeline = [{"type": "readers.las", "filename": f} for f in chunk_files]
+    valid_chunk_files = []
+    for f in chunk_files:
+        if _is_non_empty_las(f):
+            valid_chunk_files.append(f)
+        elif os.path.exists(f):
+            print(f"Warning: Removing empty intermediate file: {f}")
+            os.remove(f)
+
+    if not valid_chunk_files:
+        print("Warning: No non-empty chunk files available for merging.")
+        return None
+
+    pipeline = [{"type": "readers.las", "filename": f} for f in valid_chunk_files]
     pipeline.append({"type": "filters.merge"})
     pipeline.append({"type": "filters.crop", "polygon": wkt_dumps(target_geom)})
     pipeline.append({"type": "writers.las", "filename": output_file})
     
     try:
         pdal.pipeline.Pipeline(json.dumps(pipeline)).execute()
+        if _cleanup_empty_las(output_file):
+            print(f"Warning: Removed empty merged output file: {output_file}")
+            return None
         return output_file
     except Exception as e:
         print(f"Error merging and cropping: {e}")
         return None
+
+
+def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
+    processed_dir = os.path.join(run_merged_dir, target_fp, "processed_strips")
+    os.makedirs(processed_dir, exist_ok=True)
+
+    input_count = len(strip_files)
+    processed = []
+    skipped_no_intersection = 0
+    skipped_zero_points = 0
+
+    for strip_file in strip_files:
+        try:
+            with laspy.open(strip_file) as las:
+                header = las.header
+                minx, miny, _ = header.mins
+                maxx, maxy, _ = header.maxs
+                strip_crs = header.parse_crs()
+                ref_scale = header.scales
+                ref_offset = header.offsets
+                ref_crs = strip_crs.to_epsg() if strip_crs else 4979
+
+            strip_extent = box(minx, miny, maxx, maxy)
+
+            aoi_gdf = gdf
+            if aoi_gdf.crs and strip_crs and aoi_gdf.crs != strip_crs:
+                aoi_gdf = aoi_gdf.to_crs(strip_crs)
+
+            aoi_geom = shape(aoi_gdf.geometry.iloc[0])
+            process_geom = aoi_geom.intersection(strip_extent)
+
+            if process_geom.is_empty:
+                skipped_no_intersection += 1
+                print(f"Warning: No AOI intersection for strip {strip_file}. Skipping.")
+                continue
+
+            strip_name = os.path.splitext(os.path.basename(strip_file))[0]
+            output_path = os.path.join(processed_dir, f"{strip_name}_processed.laz")
+
+            hcrs = CRS.from_epsg(ref_crs)
+            datum = hcrs.datum.name.lower()
+            if "wgs 84" in datum:
+                vert_ellipsoid = 4979
+            elif "etrs89" in datum:
+                vert_ellipsoid = 4936
+            else:
+                vert_ellipsoid = 4979
+
+            in_srs = f"EPSG:{ref_crs}+{vert_ellipsoid}"
+            out_srs = f"EPSG:{ref_crs}+3855"
+
+            pipeline = [
+                {"type": "readers.las", "filename": strip_file},
+                {"type": "filters.reprojection", "in_srs": in_srs, "out_srs": out_srs},
+                {"type": "filters.crop", "polygon": wkt_dumps(process_geom)},
+                {"type": "filters.outlier", "method": "statistical", "mean_k": config.knn},
+                {"type": "filters.range", "limits": "Classification![7:7]"},
+                {
+                    "type": "writers.las",
+                    "filename": output_path,
+                    "scale_x": str(ref_scale[0]),
+                    "scale_y": str(ref_scale[1]),
+                    "scale_z": str(ref_scale[2]),
+                    "offset_x": str(ref_offset[0]),
+                    "offset_y": str(ref_offset[1]),
+                    "offset_z": str(ref_offset[2]),
+                    "a_srs": out_srs,
+                },
+            ]
+
+            with laspy.open(strip_file) as in_las:
+                points_before = int(in_las.header.point_count)
+            pdal.Pipeline(json.dumps(pipeline)).execute()
+
+            if _cleanup_empty_las(output_path):
+                skipped_zero_points += 1
+                print(f"Warning: Strip produced empty output and was removed: {strip_file}")
+                continue
+
+            with laspy.open(output_path) as out_las:
+                points_after = int(out_las.header.point_count)
+            if points_after == 0:
+                os.remove(output_path)
+                skipped_zero_points += 1
+                print(f"Warning: Strip has zero valid points after processing: {strip_file}")
+                continue
+
+            print(
+                f"Processed strip | input: {strip_file} | points before: {points_before} | "
+                f"points after: {points_after} | output: {output_path}"
+            )
+            processed.append(output_path)
+
+        except Exception as e:
+            print(f"Warning: Failed to preprocess strip {strip_file}: {e}")
+
+    print(
+        f"Strip preprocessing summary for {target_fp}: "
+        f"input={input_count}, processed={len(processed)}, "
+        f"skipped_no_intersection={skipped_no_intersection}, "
+        f"skipped_zero_points={skipped_zero_points}"
+    )
+
+    return processed
 
 def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0):
     """Process multiple LAS files for different target areas."""
