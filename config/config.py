@@ -85,7 +85,7 @@ class Configuration:
         self.filter_date = False  # Filter las files by date
 
         self.automatic_date_parser = True # get dates from target area only for Region_Site_Date_Res_Order filenames
-
+        self.preprocess_use_chunks = True  # True: chunk-based preprocessing; False: process each strip end-to-end (N in -> N out).
 
         self.start_date = '2023-07-10'  # Start date for filtering las files
         self.end_date = '2023-07-10'  # End date for filtering las files
