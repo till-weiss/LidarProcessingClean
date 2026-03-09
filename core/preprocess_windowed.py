@@ -9,33 +9,7 @@ import os
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 from tqdm import tqdm
 
-from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 
-
-def _is_non_empty_las(las_path):
-    if not las_path or not os.path.exists(las_path):
-        return False
-    try:
-        with laspy.open(las_path) as las:
-            return las.header.point_count > 0
-    except Exception:
-        return False
-
-
-def _cleanup_empty_las(las_path):
-    if las_path and os.path.exists(las_path) and not _is_non_empty_las(las_path):
-        os.remove(las_path)
-        return True
-    return False
-
-
-def _get_combined_geom(gdf):
-    if gdf is None or gdf.empty:
-        return None
-    geom = gdf.geometry.unary_union
-    if hasattr(geom, "is_empty") and geom.is_empty:
-        return None
-    return geom
 
 def create_chunks_from_wkt(target_geom_wkt, chunk_size=100):
     """Create grid chunks based on the bounding box of the target geometry."""
@@ -141,10 +115,17 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
     
     valid_chunk_files = []
     for f in chunk_files:
-        if _is_non_empty_las(f):
-            valid_chunk_files.append(f)
-        elif os.path.exists(f):
-            print(f"Warning: Removing empty intermediate file: {f}")
+        if not f or not os.path.exists(f):
+            continue
+        try:
+            with laspy.open(f) as las:
+                if las.header.point_count > 0:
+                    valid_chunk_files.append(f)
+                else:
+                    print(f"Warning: Removing empty intermediate file: {f}")
+                    os.remove(f)
+        except Exception:
+            print(f"Warning: Removing unreadable intermediate file: {f}")
             os.remove(f)
 
     if not valid_chunk_files:
@@ -158,9 +139,17 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
     
     try:
         pdal.pipeline.Pipeline(json.dumps(pipeline)).execute()
-        if _cleanup_empty_las(output_file):
-            print(f"Warning: Removed empty merged output file: {output_file}")
-            return None
+        if os.path.exists(output_file):
+            try:
+                with laspy.open(output_file) as las:
+                    if las.header.point_count == 0:
+                        os.remove(output_file)
+                        print(f"Warning: Removed empty merged output file: {output_file}")
+                        return None
+            except Exception:
+                os.remove(output_file)
+                print(f"Warning: Removed unreadable merged output file: {output_file}")
+                return None
         return output_file
     except Exception as e:
         print(f"Error merging and cropping: {e}")
@@ -169,9 +158,7 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
 
 def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
     processed_dir = os.path.join(run_merged_dir, target_fp, "processed_strips")
-    temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
     os.makedirs(processed_dir, exist_ok=True)
-    os.makedirs(temp_dir, exist_ok=True)
 
     input_count = len(strip_files)
     processed = []
@@ -185,10 +172,6 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
         strip_base_name = os.path.splitext(os.path.basename(strip_file))[0]
 
         try:
-            if not is_utm_crs(strip_input_file):
-                utm_strip = os.path.join(temp_dir, f"{strip_base_name}_utm.las")
-                strip_input_file = reproject_las(strip_input_file, utm_strip)
-
             with laspy.open(strip_input_file) as las:
                 header = las.header
                 minx, miny, _ = header.mins
@@ -205,8 +188,13 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
             if aoi_gdf.crs and strip_crs and aoi_gdf.crs != strip_crs:
                 aoi_gdf = aoi_gdf.to_crs(strip_crs)
 
-            aoi_geom = _get_combined_geom(aoi_gdf)
-            if aoi_geom is None:
+            if aoi_gdf.empty:
+                skipped_no_intersection += 1
+                print(f"Warning: AOI geometry is empty for {target_fp}. Skipping strip {strip_file}.")
+                continue
+
+            aoi_geom = aoi_gdf.geometry.unary_union
+            if aoi_geom.is_empty:
                 skipped_no_intersection += 1
                 print(f"Warning: AOI geometry is empty for {target_fp}. Skipping strip {strip_file}.")
                 continue
@@ -253,13 +241,19 @@ def preprocess_window(strip_files, config, target_fp, run_merged_dir, gdf):
 
             pdal.Pipeline(json.dumps(pipeline)).execute()
 
-            if _cleanup_empty_las(output_path):
+            if not os.path.exists(output_path):
                 skipped_zero_points += 1
-                print(f"Warning: Strip produced empty output and was removed: {strip_file}")
+                print(f"Warning: Strip produced no output file: {strip_file}")
                 continue
 
-            with laspy.open(output_path) as out_las:
-                points_after = int(out_las.header.point_count)
+            try:
+                with laspy.open(output_path) as out_las:
+                    points_after = int(out_las.header.point_count)
+            except Exception:
+                os.remove(output_path)
+                skipped_zero_points += 1
+                print(f"Warning: Strip output unreadable and removed: {strip_file}")
+                continue
 
             if points_after == 0:
                 os.remove(output_path)
