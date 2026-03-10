@@ -80,9 +80,6 @@ def build_strip_chunk_tasks(
         for chunk in chunks
     ]
 
-def process_chunk_wrapper(args):
-    return process_chunk(*args)
-
 def process_chunk_with_provenance(task):
     """
     task = (strip_path, chunk_args)
@@ -135,7 +132,7 @@ def merge_and_crop_chunks(chunk_files, target_geom_wkt, output_file):
         print(f"Error merging and cropping: {e}")
         return None
 
-def merge_chunks_to_strip(chunk_files, output_file, crop_geom_wkt=None):
+def merge_chunks_to_strip(chunk_files, output_file, crop_geom_wkt=wkt_dumps(process_geom)):
     """
     Merge chunk files into one strip-level LAS/LAZ file.
     """
@@ -263,6 +260,8 @@ def process_chunk(
             "in_srs": in_srs,
             "out_srs": out_srs,
         },
+        # second crop in output CRS to remove leftovers after reprojection
+        {"type": "filters.crop", "polygon": wkt_dumps(chunk_bbox)},
 
         # statistical outlier removal
         {
@@ -273,7 +272,7 @@ def process_chunk(
         },
 
         # optional z clamp if you want it
-        # {"type": "filters.range", "limits": f"Z[{min_z}:{max_z}]"},
+        {"type": "filters.range", "limits": f"Z[{min_z}:{max_z}]"},
 
         # remove class 7 noise
         {"type": "filters.range", "limits": "Classification![7:7]"},
