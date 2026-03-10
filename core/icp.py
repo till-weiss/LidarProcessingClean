@@ -48,7 +48,7 @@ def _extract_timestamp(strip_path):
     if date:
         return datetime.combine(date, datetime.min.time())
 
-    return datetime.utcfromtimestamp(os.path.getmtime(strip_path))
+    return datetime.max
 
 
 def _read_las_points(las_path):
@@ -86,6 +86,13 @@ def _write_xyz_cloud(xyz, output_path):
     las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
     las.write(output_path)
     return output_path
+
+
+def _build_icp_ready_strip(input_strip, output_strip, cfg, temp_dir, prefix):
+    _, xyz, cls = _read_las_points(input_strip)
+    icp_xyz, meta = _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix)
+    out_path = _write_xyz_cloud(icp_xyz, output_strip)
+    return out_path, meta
 
 
 def _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix):
@@ -207,48 +214,72 @@ def _apply_transform_to_strip(input_strip, output_strip, transform):
 
 
 def align_strips_incremental_icp(processed_strip_files, target_fp, config):
-    """Sequential strip alignment: first strip fixed, each next strip aligned to already aligned strips."""
+    """Sequential strip alignment: first strip fixed, each next strip aligned to previous aligned strip."""
     if len(processed_strip_files) < 2 or not getattr(config, "enable_icp", True):
         return processed_strip_files
 
     ordered = sorted(processed_strip_files, key=_extract_timestamp)
     aoi_name = os.path.splitext(str(target_fp))[0]
-    results_root = os.path.join(config.results_dir, config.run_name)
-    logs_dir = os.path.join(results_root, "log")
+
+    preprocessed_aoi_root = os.path.join(config.preprocessed_dir, config.run_name, aoi_name)
+    logs_dir = os.path.join(preprocessed_aoi_root, "logs")
+    aligned_dir = os.path.join(preprocessed_aoi_root, "aligned_strips")
+    icp_ready_dir = os.path.join(preprocessed_aoi_root, "icp_ready_strips")
+    temp_icp_dir = os.path.join(preprocessed_aoi_root, "icp_temp")
     os.makedirs(logs_dir, exist_ok=True)
-
-    run_log_path = os.path.join(logs_dir, f"{config.run_name}_icp_alignment_log.jsonl")
-    run_summary_path = os.path.join(logs_dir, f"{config.run_name}_icp_run_summary.json")
-
-    aligned_dir = os.path.join(config.preprocessed_dir, config.run_name, "aligned_strips")
-    icp_ready_dir = os.path.join(config.preprocessed_dir, config.run_name, "icp_ready")
-    temp_icp_dir = os.path.join(config.preprocessed_dir, config.run_name, "icp_temp")
     os.makedirs(aligned_dir, exist_ok=True)
     os.makedirs(icp_ready_dir, exist_ok=True)
     os.makedirs(temp_icp_dir, exist_ok=True)
 
+    run_log_path = os.path.join(logs_dir, "icp_alignment_log.jsonl")
+    run_summary_path = os.path.join(logs_dir, "icp_run_summary.json")
+
+    # Build ICP-ready version for every original strip before alignment.
+    icp_ready_original_by_strip = {}
+    icp_ready_meta_by_strip = {}
+    for strip in ordered:
+        strip_base = os.path.splitext(os.path.basename(strip))[0]
+        out_icp_ready = os.path.join(icp_ready_dir, f"{strip_base}_icp_ready.laz")
+        icp_path, icp_meta = _build_icp_ready_strip(strip, out_icp_ready, config, temp_icp_dir, f"{strip_base}_full")
+        icp_ready_original_by_strip[strip] = icp_path
+        icp_ready_meta_by_strip[strip] = icp_meta
+
     aligned_outputs = []
+    aligned_icp_ready_by_full_strip = {}
+
     fixed_first = os.path.join(aligned_dir, os.path.basename(ordered[0]))
     shutil.copy2(ordered[0], fixed_first)
     aligned_outputs.append(fixed_first)
+    aligned_icp_ready_by_full_strip[fixed_first] = icp_ready_original_by_strip.get(ordered[0])
 
     summary = {"total_pairs": 0, "attempted": 0, "accepted": 0, "rejected": 0, "skipped": 0}
 
     with open(run_log_path, "a", encoding="utf-8") as run_log:
         for idx, source in enumerate(ordered[1:], start=1):
             start_pair = time.time()
-            target = aligned_outputs[-1] if len(aligned_outputs) == 1 else "MERGED_ALIGNED_SET"
-            pair_id = f"{idx:03d}_{os.path.basename(source)}"
+            target_full = aligned_outputs[-1]
+            source_name = os.path.splitext(os.path.basename(source))[0]
+            target_name = os.path.splitext(os.path.basename(target_full))[0]
+            pair_id = f"{source_name}_to_{target_name}"
 
-            src_las, src_xyz, src_cls = _read_las_points(source)
-            target_xyz_parts = []
-            for aligned_target in aligned_outputs:
-                _, t_xyz, _ = _read_las_points(aligned_target)
-                target_xyz_parts.append(t_xyz)
-            tgt_xyz = np.vstack(target_xyz_parts) if target_xyz_parts else np.empty((0, 3))
+            _, src_xyz_full, src_cls_full = _read_las_points(source)
+            _, tgt_xyz_full, _ = _read_las_points(target_full)
+
+            source_icp_ready_path = icp_ready_original_by_strip.get(source)
+            target_icp_ready_path = aligned_icp_ready_by_full_strip.get(target_full)
+
+            if source_icp_ready_path and os.path.exists(source_icp_ready_path):
+                _, src_icp_full, src_icp_cls = _read_las_points(source_icp_ready_path)
+            else:
+                src_icp_full, src_icp_cls = src_xyz_full, src_cls_full
+
+            if target_icp_ready_path and os.path.exists(target_icp_ready_path):
+                _, tgt_icp_full, _ = _read_las_points(target_icp_ready_path)
+            else:
+                tgt_icp_full = tgt_xyz_full
 
             src_poly, src_count = _las_bounds_polygon(source)
-            tgt_poly = box(np.min(tgt_xyz[:, 0]), np.min(tgt_xyz[:, 1]), np.max(tgt_xyz[:, 0]), np.max(tgt_xyz[:, 1]))
+            tgt_poly = box(np.min(tgt_icp_full[:, 0]), np.min(tgt_icp_full[:, 1]), np.max(tgt_icp_full[:, 0]), np.max(tgt_icp_full[:, 1]))
             overlap = src_poly.intersection(tgt_poly).buffer(float(getattr(config, "icp_overlap_buffer", 0.0)))
 
             pair_log = {
@@ -257,9 +288,9 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 "run_name": config.run_name,
                 "pair_id": pair_id,
                 "source_strip": source,
-                "target_strip": target,
+                "target_strip": target_full,
                 "source_full_point_count": int(src_count),
-                "target_full_point_count": int(len(tgt_xyz)),
+                "target_full_point_count": int(len(tgt_xyz_full)),
                 "overlap_method": "bbox_intersection",
                 "icp_parameters": {
                     "method": getattr(config, "icp_method", "point_to_plane"),
@@ -275,9 +306,9 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 "transform_applied": False,
                 "reject_reason": None,
                 "warnings_or_errors": [],
-                "icp_ready_source_path": None,
-                "icp_ready_target_path": None,
-                "ground_source_point_count": 0,
+                "icp_ready_source_path": source_icp_ready_path,
+                "icp_ready_target_path": target_icp_ready_path,
+                "ground_source_point_count": int(icp_ready_meta_by_strip.get(source, {}).get("ground_point_count", 0)),
                 "ground_target_point_count": 0,
             }
             summary["total_pairs"] += 1
@@ -288,15 +319,15 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 summary["skipped"] += 1
             else:
                 minx, miny, maxx, maxy = overlap.bounds
-                src_mask = (src_xyz[:, 0] >= minx) & (src_xyz[:, 0] <= maxx) & (src_xyz[:, 1] >= miny) & (src_xyz[:, 1] <= maxy)
-                tgt_mask = (tgt_xyz[:, 0] >= minx) & (tgt_xyz[:, 0] <= maxx) & (tgt_xyz[:, 1] >= miny) & (tgt_xyz[:, 1] <= maxy)
-                src_ov = src_xyz[src_mask]
-                tgt_ov = tgt_xyz[tgt_mask]
+                src_mask = (src_icp_full[:, 0] >= minx) & (src_icp_full[:, 0] <= maxx) & (src_icp_full[:, 1] >= miny) & (src_icp_full[:, 1] <= maxy)
+                tgt_mask = (tgt_icp_full[:, 0] >= minx) & (tgt_icp_full[:, 0] <= maxx) & (tgt_icp_full[:, 1] >= miny) & (tgt_icp_full[:, 1] <= maxy)
+                src_ov = src_icp_full[src_mask]
+                tgt_ov = tgt_icp_full[tgt_mask]
 
                 pair_log["overlap_point_count_source"] = int(len(src_ov))
                 pair_log["overlap_point_count_target"] = int(len(tgt_ov))
-                pair_log["overlap_fraction_source"] = float(len(src_ov) / max(len(src_xyz), 1))
-                pair_log["overlap_fraction_target"] = float(len(tgt_ov) / max(len(tgt_xyz), 1))
+                pair_log["overlap_fraction_source"] = float(len(src_ov) / max(len(src_icp_full), 1))
+                pair_log["overlap_fraction_target"] = float(len(tgt_ov) / max(len(tgt_icp_full), 1))
 
                 min_overlap_points = int(getattr(config, "icp_min_overlap_points", 2500))
                 if len(src_ov) < min_overlap_points or len(tgt_ov) < min_overlap_points:
@@ -304,18 +335,12 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                     pair_log["would_be_rejected"] = True
                     summary["skipped"] += 1
                 else:
-                    src_icp, src_meta = _prepare_icp_points(src_ov, src_cls[src_mask] if src_cls is not None else None, config, temp_icp_dir, f"{pair_id}_src")
-                    tgt_icp, tgt_meta = _prepare_icp_points(tgt_ov, None, config, temp_icp_dir, f"{pair_id}_tgt")
-                    pair_log["ground_source_point_count"] = int(src_meta.get("ground_point_count", 0))
-                    pair_log["ground_target_point_count"] = int(tgt_meta.get("ground_point_count", 0))
-                    pair_log["ground_only_mode_used"] = bool(src_meta["used_ground_only"] and tgt_meta["used_ground_only"])
-                    pair_log["fallback_mode_used"] = bool(src_meta["used_fallback"] or tgt_meta["used_fallback"])
-                    pair_log["warnings_or_errors"].extend(src_meta["warnings"] + tgt_meta["warnings"])
-
-                    src_icp_path = os.path.join(icp_ready_dir, f"{pair_id}_source_icp_ready.laz")
-                    tgt_icp_path = os.path.join(icp_ready_dir, f"{pair_id}_target_icp_ready.laz")
-                    pair_log["icp_ready_source_path"] = _write_xyz_cloud(src_icp, src_icp_path)
-                    pair_log["icp_ready_target_path"] = _write_xyz_cloud(tgt_icp, tgt_icp_path)
+                    # Already ICP-ready per-strip, so keep overlap subsets as-is.
+                    src_icp = src_ov
+                    tgt_icp = tgt_ov
+                    pair_log["ground_only_mode_used"] = bool(icp_ready_meta_by_strip.get(source, {}).get("used_ground_only", False))
+                    pair_log["fallback_mode_used"] = bool(icp_ready_meta_by_strip.get(source, {}).get("used_fallback", False))
+                    pair_log["warnings_or_errors"].extend(icp_ready_meta_by_strip.get(source, {}).get("warnings", []))
 
                     pair_log["pre_icp_qc_statistics"] = {
                         "source_icp_points": int(len(src_icp)),
@@ -380,6 +405,20 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                                 summary["rejected"] += 1
 
                             aligned_outputs.append(aligned_source)
+
+                            aligned_icp_ready_path = os.path.join(
+                                icp_ready_dir,
+                                f"{os.path.splitext(os.path.basename(aligned_source))[0]}_icp_ready.laz",
+                            )
+                            out_ready, out_meta = _build_icp_ready_strip(
+                                aligned_source,
+                                aligned_icp_ready_path,
+                                config,
+                                temp_icp_dir,
+                                f"{os.path.splitext(os.path.basename(aligned_source))[0]}_full",
+                            )
+                            aligned_icp_ready_by_full_strip[aligned_source] = out_ready
+                            pair_log["ground_target_point_count"] = int(out_meta.get("ground_point_count", 0))
                         except Exception as exc:
                             pair_log["reject_reason"] = f"ICP failure: {exc}"
                             pair_log["warnings_or_errors"].append(str(exc))
@@ -387,6 +426,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                             passthrough = os.path.join(aligned_dir, os.path.basename(source))
                             shutil.copy2(source, passthrough)
                             aligned_outputs.append(passthrough)
+                            aligned_icp_ready_by_full_strip[passthrough] = icp_ready_original_by_strip.get(source)
 
             pair_log["runtime_seconds"] = float(time.time() - start_pair)
             run_log.write(json.dumps(_safe_json(pair_log)) + "\n")
@@ -396,4 +436,5 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     shutil.rmtree(temp_icp_dir, ignore_errors=True)
     return aligned_outputs
+
 
