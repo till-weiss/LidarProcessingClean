@@ -51,6 +51,18 @@ def _extract_timestamp(strip_path):
     return datetime.max
 
 
+def _extract_start_timestamp_from_filename(strip_path):
+    """Extract acquisition start timestamp from filename, e.g. 20230707T165034."""
+    file_name = os.path.basename(strip_path)
+    match = re.search(r"(\d{8}T\d{6})", file_name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%dT%H%M%S")
+    except ValueError:
+        return None
+
+
 def _read_las_points(las_path):
     las = laspy.read(las_path)
     xyz = np.column_stack((las.x, las.y, las.z)).astype(np.float64)
@@ -218,7 +230,17 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     if len(processed_strip_files) < 2 or not getattr(config, "enable_icp", True):
         return processed_strip_files
 
+    for strip in processed_strip_files:
+        if _extract_start_timestamp_from_filename(strip) is None:
+            print(
+                f"[WARN] Could not parse start timestamp from filename for strip ordering: {os.path.basename(strip)}. "
+                "Falling back to current ordering behavior."
+            )
+
     ordered = sorted(processed_strip_files, key=_extract_timestamp)
+    print("[ICP] Final strip order before incremental alignment:")
+    for idx, strip in enumerate(ordered, start=1):
+        print(f"  {idx:02d}. {os.path.basename(strip)}")
     aoi_name = os.path.splitext(str(target_fp))[0]
 
     preprocessed_aoi_root = os.path.join(config.preprocessed_dir, config.run_name, aoi_name)
@@ -436,5 +458,4 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     shutil.rmtree(temp_icp_dir, ignore_errors=True)
     return aligned_outputs
-
 
