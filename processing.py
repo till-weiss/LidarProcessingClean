@@ -96,6 +96,7 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
     start_time = time.time()
     las_files = glob.glob(os.path.join(input_folder, run_name, "*.las")) + \
                 glob.glob(os.path.join(input_folder, run_name, "*.laz"))
+    las_files += glob.glob(os.path.join(input_folder, run_name, "*", "*_merged_aligned.laz"))
 
     if not las_files:
         print("No LAS/LAZ files found. Exiting DSM generation.")
@@ -186,6 +187,7 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
     start_time = time.time()
     las_files = glob.glob(os.path.join(input_folder, run_name, "*.las")) + \
                 glob.glob(os.path.join(input_folder, run_name, "*.laz"))
+    las_files += glob.glob(os.path.join(input_folder, run_name, "*", "*_merged_aligned.laz"))
     
     if not las_files:
         print("No LAS/LAZ files found. Exiting DTM generation.")

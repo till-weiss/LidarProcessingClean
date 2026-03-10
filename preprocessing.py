@@ -19,7 +19,23 @@ from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, merge_chunks_to_strip
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
+from core.strip_icp import align_strips_incremental, _make_icp_ready_strip
 
+
+
+
+def build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, config, logger=None):
+    icp_ready_dir = os.path.join(run_merged_dir, target_fp, "icp_ready_strips")
+    os.makedirs(icp_ready_dir, exist_ok=True)
+
+    icp_ready_files = []
+    for processed_strip in processed_strip_files:
+        base = os.path.splitext(os.path.basename(processed_strip))[0]
+        out_icp_ready = os.path.join(icp_ready_dir, f"{base}_icp_ready.laz")
+        ready_path = _make_icp_ready_strip(processed_strip, out_icp_ready, config, logger=logger)
+        icp_ready_files.append(ready_path)
+
+    return icp_ready_files
 
 def get_las_header(las_file):
     with laspy.open(las_file) as las:
@@ -326,13 +342,27 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             )
             processed_strips_by_target[target_fp] = processed_strip_files
 
-            if processed_strip_files:
-                merge_chunks_to_strip(processed_strip_files, final_output_file)
-                if has_points(final_output_file):
-                    print(f"Final processed LAS file saved: {final_output_file}")
+            icp_ready_files = build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, config)
+
+            strips_for_merge = processed_strip_files
+            if config.use_strip_icp and len(strips_for_merge) >= 2:
+                try:
+                    import open3d  # noqa: F401
+                except ImportError as e:
+                    raise ImportError("use_strip_icp=True requires open3d. Install it in your environment (e.g. add open3d to pixi/conda env).") from e
+                config.icp_current_aoi_name = target_fp
+                strips_for_merge = align_strips_incremental(strips_for_merge, config, icp_ready_paths=icp_ready_files)
+
+            if strips_for_merge:
+                merge_output_file = final_output_file
+                if config.use_strip_icp and len(processed_strip_files) >= 2:
+                    merge_output_file = os.path.join(run_merged_dir, target_fp, f"{target_fp}_merged_aligned.laz")
+                merge_chunks_to_strip(strips_for_merge, merge_output_file)
+                if has_points(merge_output_file):
+                    print(f"Final processed LAS file saved: {merge_output_file}")
                 else:
-                    os.remove(final_output_file)
-                    print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
+                    os.remove(merge_output_file)
+                    print(f"[WARN] Final processed LAS is empty and was removed: {merge_output_file}")
             else:
                 print(f"No processed strips available for {target_fp}.")
 
@@ -449,15 +479,29 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
 
         processed_strips_by_target[target_fp] = processed_strip_files
 
-        if processed_chunks:
-            merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
-            if has_points(final_output_file):
-                print(f"Final processed LAS file saved: {final_output_file}")
+        icp_ready_files = build_icp_ready_strips(processed_strip_files, run_merged_dir, target_fp, config)
+
+        strips_for_merge = processed_strip_files
+        if config.use_strip_icp and len(strips_for_merge) >= 2:
+            try:
+                import open3d  # noqa: F401
+            except ImportError as e:
+                raise ImportError("use_strip_icp=True requires open3d. Install it in your environment (e.g. add open3d to pixi/conda env).") from e
+            config.icp_current_aoi_name = target_fp
+            strips_for_merge = align_strips_incremental(strips_for_merge, config, icp_ready_paths=icp_ready_files)
+
+        if strips_for_merge:
+            merge_output_file = final_output_file
+            if config.use_strip_icp and len(processed_strip_files) >= 2:
+                merge_output_file = os.path.join(run_merged_dir, target_fp, f"{target_fp}_merged_aligned.laz")
+            merge_chunks_to_strip(strips_for_merge, merge_output_file)
+            if has_points(merge_output_file):
+                print(f"Final processed LAS file saved: {merge_output_file}")
             else:
-                os.remove(final_output_file)
-                print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
+                os.remove(merge_output_file)
+                print(f"[WARN] Final processed LAS is empty and was removed: {merge_output_file}")
         else:
-            print(f"No processed chunks available for {target_fp}.")
+            print(f"No processed strips available for {target_fp}.")
 
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
