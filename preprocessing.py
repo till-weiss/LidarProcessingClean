@@ -200,7 +200,12 @@ def merge_and_clean_las(
             continue
 
         clean_target_fp = os.path.splitext(target_fp)[0]
-        final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
+        output_stem = (
+            f"{clean_target_fp}_aligned"
+            if config.preprocess_by_strip and getattr(config, "enable_icp", True)
+            else clean_target_fp
+        )
+        final_output_file = os.path.join(run_merged_dir, f"{output_stem}.laz")
 
         if os.path.exists(final_output_file):
             if has_points(final_output_file):
