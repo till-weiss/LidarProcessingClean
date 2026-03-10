@@ -76,6 +76,18 @@ def _classify_ground_smrf(temp_input, temp_output, cfg):
     pipe.execute()
 
 
+
+
+def _write_xyz_cloud(xyz, output_path):
+    if xyz is None or len(xyz) == 0:
+        return None
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    las = laspy.create(file_version="1.4", point_format=6)
+    las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    las.write(output_path)
+    return output_path
+
+
 def _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix):
     """
     Build ICP-ready points from overlap cloud.
@@ -84,16 +96,29 @@ def _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix):
     warnings = []
     used_ground_only = False
     used_fallback = False
+    ground_point_count = 0
 
     if len(xyz) == 0:
-        return xyz, {"used_ground_only": False, "used_fallback": True, "warnings": ["empty input"]}
+        return xyz, {
+            "used_ground_only": False,
+            "used_fallback": True,
+            "warnings": ["empty input"],
+            "ground_point_count": 0,
+        }
 
     points = xyz
     if getattr(cfg, "icp_use_ground_only", True):
-        ground_mask = None
+        min_ground = int(getattr(cfg, "icp_min_ground_points", 800))
 
         if cls is not None and len(cls) == len(xyz):
-            ground_mask = cls == 2
+            ground_points = xyz[cls == 2]
+            ground_point_count = int(len(ground_points))
+            if len(ground_points) >= min_ground:
+                points = ground_points
+                used_ground_only = True
+            else:
+                used_fallback = True
+                warnings.append(f"Too few classified ground points ({len(ground_points)}<{min_ground}), fallback to non-ground")
         else:
             try:
                 temp_in = os.path.join(temp_dir, f"{prefix}_overlap_in.laz")
@@ -104,21 +129,17 @@ def _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix):
                 las.write(temp_in)
                 _classify_ground_smrf(temp_in, temp_out, cfg)
                 smrf_las = laspy.read(temp_out)
-                ground_mask = np.asarray(smrf_las.classification) == 2
+                ground_points = xyz[np.asarray(smrf_las.classification) == 2]
+                ground_point_count = int(len(ground_points))
+                if len(ground_points) >= min_ground:
+                    points = ground_points
+                    used_ground_only = True
+                else:
+                    used_fallback = True
+                    warnings.append(f"Too few SMRF ground points ({len(ground_points)}<{min_ground}), fallback to non-ground")
             except Exception as exc:
-                warnings.append(f"SMRF classification failed: {exc}")
-
-        if ground_mask is not None:
-            ground_points = xyz[ground_mask]
-            min_ground = int(getattr(cfg, "icp_min_ground_points", 800))
-            if len(ground_points) >= min_ground:
-                points = ground_points
-                used_ground_only = True
-            else:
                 used_fallback = True
-                warnings.append(f"Too few ground points ({len(ground_points)}<{min_ground}), fallback to non-ground")
-        else:
-            used_fallback = True
+                warnings.append(f"SMRF classification failed: {exc}")
 
     voxel = float(getattr(cfg, "icp_voxel_size", 1.0))
     if voxel > 0 and len(points) > 0:
@@ -130,6 +151,7 @@ def _prepare_icp_points(xyz, cls, cfg, temp_dir, prefix):
         "used_ground_only": used_ground_only,
         "used_fallback": used_fallback,
         "warnings": warnings,
+        "ground_point_count": int(ground_point_count),
     }
 
 
@@ -198,9 +220,11 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     run_log_path = os.path.join(logs_dir, f"{config.run_name}_icp_alignment_log.jsonl")
     run_summary_path = os.path.join(logs_dir, f"{config.run_name}_icp_run_summary.json")
 
-    aligned_dir = os.path.join(os.path.dirname(ordered[0]), "aligned_strips")
-    temp_icp_dir = os.path.join(os.path.dirname(ordered[0]), "icp_temp")
+    aligned_dir = os.path.join(config.preprocessed_dir, config.run_name, "aligned_strips")
+    icp_ready_dir = os.path.join(config.preprocessed_dir, config.run_name, "icp_ready")
+    temp_icp_dir = os.path.join(config.preprocessed_dir, config.run_name, "icp_temp")
     os.makedirs(aligned_dir, exist_ok=True)
+    os.makedirs(icp_ready_dir, exist_ok=True)
     os.makedirs(temp_icp_dir, exist_ok=True)
 
     aligned_outputs = []
@@ -251,6 +275,10 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 "transform_applied": False,
                 "reject_reason": None,
                 "warnings_or_errors": [],
+                "icp_ready_source_path": None,
+                "icp_ready_target_path": None,
+                "ground_source_point_count": 0,
+                "ground_target_point_count": 0,
             }
             summary["total_pairs"] += 1
 
@@ -278,9 +306,17 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 else:
                     src_icp, src_meta = _prepare_icp_points(src_ov, src_cls[src_mask] if src_cls is not None else None, config, temp_icp_dir, f"{pair_id}_src")
                     tgt_icp, tgt_meta = _prepare_icp_points(tgt_ov, None, config, temp_icp_dir, f"{pair_id}_tgt")
+                    pair_log["ground_source_point_count"] = int(src_meta.get("ground_point_count", 0))
+                    pair_log["ground_target_point_count"] = int(tgt_meta.get("ground_point_count", 0))
                     pair_log["ground_only_mode_used"] = bool(src_meta["used_ground_only"] and tgt_meta["used_ground_only"])
                     pair_log["fallback_mode_used"] = bool(src_meta["used_fallback"] or tgt_meta["used_fallback"])
                     pair_log["warnings_or_errors"].extend(src_meta["warnings"] + tgt_meta["warnings"])
+
+                    src_icp_path = os.path.join(icp_ready_dir, f"{pair_id}_source_icp_ready.laz")
+                    tgt_icp_path = os.path.join(icp_ready_dir, f"{pair_id}_target_icp_ready.laz")
+                    pair_log["icp_ready_source_path"] = _write_xyz_cloud(src_icp, src_icp_path)
+                    pair_log["icp_ready_target_path"] = _write_xyz_cloud(tgt_icp, tgt_icp_path)
+
                     pair_log["pre_icp_qc_statistics"] = {
                         "source_icp_points": int(len(src_icp)),
                         "target_icp_points": int(len(tgt_icp)),
