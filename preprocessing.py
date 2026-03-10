@@ -5,6 +5,7 @@ import shutil
 from datetime import timedelta
 from datetime import datetime
 from multiprocessing import Pool
+import numpy as np
 
 import pdal
 import laspy
@@ -16,7 +17,20 @@ from shapely.geometry import shape
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
-from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
+from core.preprocess_windowed import (
+    create_chunks_from_wkt,
+    process_chunk,
+    process_chunk_wrapper,
+    merge_and_crop_chunks,
+    merge_chunks_to_strip,
+    preprocess_window,
+    has_points,
+    get_las_bounds_wkt,
+    get_las_header,
+    process_chunk_with_provenance,
+    group_chunks_by_strip,
+    build_strip_chunk_tasks,
+)
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
 
@@ -152,13 +166,33 @@ def match_footprints(target_footprint_dir, las_footprint_dir, las_file_dir, out_
     return target_dict
 
 
-def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_dir, max_elev, sor_knn, sor_multiplier, num_workers, chunk_size=1000):
+def merge_and_clean_las(
+    las_dict,
+    preprocessed_dir,
+    run_name,
+    target_footprint_dir,
+    config,
+    num_workers,
+    chunk_size=1000,
+):
+    """
+    Main preprocessing entry point.
 
+    Modes:
+    - config.preprocess_by_strip = False:
+        original chunk mode:
+        process all chunks and merge directly to one final AOI output
+
+    - config.preprocess_by_strip = True:
+        strip-preserving chunked mode:
+        process chunks per strip -> merge to processed strip files -> merge strips to final AOI output
+    """
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
 
-    print("\nProcessing LAS files in chunks...")
+    print("\nProcessing LAS files...")
     start = time.time()
+    processed_strips_by_target = {}
 
     for target_fp, las_files in tqdm(las_dict.items(), desc="Processing target areas", unit="area"):
         if not las_files:
@@ -166,65 +200,140 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             continue
 
         clean_target_fp = os.path.splitext(target_fp)[0]
-        final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.las")
+        final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
 
         if os.path.exists(final_output_file):
-            print(f"Skipping {target_fp}: Already processed.")
-            continue
+            if has_points(final_output_file):
+                print(f"Skipping {target_fp}: Already processed.")
+                continue
+            os.remove(final_output_file)
+            print(f"[WARN] Existing output was empty and will be reprocessed: {final_output_file}")
 
-        footprint_path = os.path.join(target_footprint_dir, target_fp if target_fp.endswith('.gpkg') else f"{target_fp}.gpkg")
+        footprint_path = os.path.join(
+            target_footprint_dir,
+            target_fp if target_fp.endswith(".gpkg") else f"{target_fp}.gpkg",
+        )
         if not os.path.exists(footprint_path):
             print(f"Footprint file {footprint_path} not found. Skipping.")
             continue
 
         gdf = gpd.read_file(footprint_path)
+
         temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
         os.makedirs(temp_dir, exist_ok=True)
 
+        target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
+
+        # -------------------------------------------------------------
+        # strip-preserving chunked mode
+        # -------------------------------------------------------------
+        if config.preprocess_by_strip:
+
+            processed_strip_files = preprocess_window(
+                strip_files=las_files,
+                config=config,
+                target_fp=target_fp,
+                run_merged_dir=run_merged_dir,
+                temp_dir=temp_dir,
+                target_gdf=gdf,
+                num_workers=num_workers,
+                chunk_size=chunk_size,
+            )
+            processed_strips_by_target[target_fp] = processed_strip_files
+
+            if processed_strip_files:
+                merge_chunks_to_strip(processed_strip_files, final_output_file)
+                if has_points(final_output_file):
+                    print(f"Final processed LAS file saved: {final_output_file}")
+                else:
+                    os.remove(final_output_file)
+                    print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
+            else:
+                print(f"No processed strips available for {target_fp}.")
+
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+            target_fp_dir = os.path.join(run_merged_dir, target_fp)
+            if os.path.isdir(target_fp_dir) and not os.listdir(target_fp_dir):
+                os.rmdir(target_fp_dir)
+
+            continue
+
+        # -------------------------------------------------------------
+        # original chunk mode
+        # -------------------------------------------------------------
         processed_chunks = []
         process_args = []
 
+        print(f"Input strips for {target_fp}: {len(las_files)}")
+
         for input_file in las_files:
-            if not is_utm_crs(input_file):
-                # Handle both .las and .laz extensions
-                base_name = os.path.basename(input_file)
-                base_name = base_name.replace('.las', '_utm.las').replace('.laz', '_utm.las')
+            strip_input = input_file
+
+            if not is_utm_crs(strip_input):
+                base_name = os.path.basename(strip_input)
+                base_name = base_name.replace(".las", "_utm.las").replace(".laz", "_utm.laz")
                 utm_output_file = os.path.join(temp_dir, base_name)
-                input_file = reproject_las(input_file, utm_output_file)
+                strip_input = reproject_las(strip_input, utm_output_file)
 
-            ref_scale, ref_offset, ref_crs = get_las_header(input_file)
+            ref_scale, ref_offset, ref_crs = get_las_header(strip_input)
 
-            if gdf.crs.to_epsg() != ref_crs:
-                gdf = gdf.to_crs(epsg=ref_crs)
+            gdf_proj = gdf.to_crs(epsg=ref_crs) if gdf.crs.to_epsg() != ref_crs else gdf
+            target_geom_local = shape(gdf_proj.geometry.iloc[0])
+            target_geom_wkt_local = wkt_dumps(target_geom_local)
 
-            target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+            strip_geom_wkt = get_las_bounds_wkt(strip_input)
+            strip_geom = wkt_loads(strip_geom_wkt)
+            process_geom = target_geom_local.intersection(strip_geom)
 
-            if max_elev:
+            if process_geom.is_empty:
+                print(f"[WARN] Strip does not intersect AOI and is skipped: {strip_input}")
+                continue
 
-                all_z = laspy.read(input_file).z
-                max_z = np.quantile(all_z, max_elev)
-                min_z = np.quantile(all_z, 1 - max_elev)
+            chunks = create_chunks_from_wkt(wkt_dumps(process_geom), chunk_size)
+            print(f"Chunks created for strip {os.path.basename(strip_input)}: {len(chunks)}")
 
+            all_z = laspy.read(strip_input).z
+            if getattr(config, "max_elevation_threshold", None):
+                max_z = np.quantile(all_z, config.max_elevation_threshold)
+                min_z = np.quantile(all_z, 1 - config.max_elevation_threshold)
             else:
-                all_z = laspy.read(input_file).z
                 max_z = np.max(all_z)
                 min_z = np.min(all_z)
 
-
             for chunk in chunks:
-                process_args.append((input_file, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
+                process_args.append(
+                    (
+                        strip_input,
+                        chunk,
+                        temp_dir,
+                        max_z,
+                        min_z,
+                        config.knn,
+                        config.multiplier,
+                        ref_scale,
+                        ref_offset,
+                        ref_crs,
+                    )
+                )
 
         with tqdm(total=len(process_args), desc=f"Processing {target_fp}", unit="chunk") as pbar:
             with Pool(processes=num_workers) as pool:
                 for processed_chunk in pool.imap_unordered(process_chunk_wrapper, process_args):
-                    if processed_chunk:
+                    if processed_chunk and has_points(processed_chunk):
                         processed_chunks.append(processed_chunk)
                     pbar.update(1)
 
+        processed_strips_by_target[target_fp] = []
+
         if processed_chunks:
             merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
-            print(f"Final processed LAS file saved: {final_output_file}")
+            if has_points(final_output_file):
+                print(f"Final processed LAS file saved: {final_output_file}")
+            else:
+                os.remove(final_output_file)
+                print(f"[WARN] Final processed LAS is empty and was removed: {final_output_file}")
         else:
             print(f"No processed chunks available for {target_fp}.")
 
@@ -236,7 +345,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             os.rmdir(target_fp_dir)
 
     print(f"\nProcessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.")
-
+    return processed_strips_by_target
 
 def preprocess_all(conf):
     global config
@@ -280,12 +389,10 @@ def preprocess_all(conf):
         target_footprint_dir=config.target_area_dir,
         las_dict=target_dict,
         preprocessed_dir=config.preprocessed_dir,
-        max_elev=config.max_elevation_threshold,
-        sor_knn=config.knn,
-        sor_multiplier=config.multiplier,
         num_workers=config.num_workers,
         run_name=run_name,
-        chunk_size=config.chunk_size
+        chunk_size=config.chunk_size,
+        config=config,
     )
 
     print(f"\nPreprocessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.\n")

@@ -34,6 +34,9 @@ class Configuration:
         self.multiple_targets = False  # If target areas are saved in one gdf set to True
         self.target_name_field = 'fid'  # Field in target area gdf to use as target name
 
+        self.preprocess_by_strip = True  # Whether to preserve strip boundaries while chunking (chunk or strip)
+        self.chunk_size = 1000  # chunk size (m) for preprocessing
+
         # elevation outlier cap (quantile in [0–1])
         self.max_elevation_threshold = 0.99  # Higher removes more high outliers (aircraft/atmosphere). Typical 0.98–0.9995.
 
