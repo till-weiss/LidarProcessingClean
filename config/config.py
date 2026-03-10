@@ -98,6 +98,26 @@ class Configuration:
         self.chunk_overlap = 0.1  # chunk overlap (fraction). 0.05–0.3. More reduces seam artifacts.
         self.num_workers = 8  # parallel workers. <= physical cores/RAM capacity.
 
+        # _______ ICP strip alignment _______
+        self.enable_icp = True
+        self.icp_method = "point_to_plane"
+        self.icp_use_ground_only = True
+        self.icp_min_ground_points = 800
+        self.icp_voxel_size = 1.0
+        self.icp_max_correspondence_distance = 2.0
+        self.icp_max_iterations = 80
+        self.icp_overlap_buffer = 0.0
+        self.icp_min_overlap_points = 2500
+
+        # ICP QC
+        self.icp_qc_enabled = True
+        self.icp_max_translation_norm = 5.0
+        self.icp_max_horizontal_shift = 4.0
+        self.icp_max_vertical_shift = 1.5
+        self.icp_max_rotation_deg = 3.0
+        self.icp_min_fitness = 0.25
+        self.icp_max_rmse = 1.25
+
         # Set overall GDAL settings
         gdal.UseExceptions()  # Enable exceptions instead of silent failures
         gdal.SetCacheMax(32000000000)  # GDAL cache bytes (~32 GB). Set to ~20–60% of available RAM for big rasters.
