@@ -191,12 +191,12 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     ordered = sorted(processed_strip_files, key=_extract_timestamp)
     aoi_name = os.path.splitext(str(target_fp))[0]
-    results_root = os.path.join(config.results_dir, aoi_name, config.run_name)
-    logs_dir = os.path.join(results_root, "logs")
+    results_root = os.path.join(config.results_dir, config.run_name)
+    logs_dir = os.path.join(results_root, "log")
     os.makedirs(logs_dir, exist_ok=True)
 
-    run_log_path = os.path.join(logs_dir, "icp_alignment_log.jsonl")
-    run_summary_path = os.path.join(logs_dir, "icp_run_summary.json")
+    run_log_path = os.path.join(logs_dir, f"{config.run_name}_icp_alignment_log.jsonl")
+    run_summary_path = os.path.join(logs_dir, f"{config.run_name}_icp_run_summary.json")
 
     aligned_dir = os.path.join(os.path.dirname(ordered[0]), "aligned_strips")
     temp_icp_dir = os.path.join(os.path.dirname(ordered[0]), "icp_temp")
@@ -360,5 +360,4 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     shutil.rmtree(temp_icp_dir, ignore_errors=True)
     return aligned_outputs
-
 
