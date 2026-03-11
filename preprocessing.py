@@ -358,9 +358,14 @@ def preprocess_all(conf):
     os.makedirs(os.path.join(config.preprocessed_dir, run_name), exist_ok=True)
     os.makedirs(os.path.join(config.results_dir, run_name), exist_ok=True)
 
-    gdfs = os.listdir(config.target_area_dir)
+    gdfs = sorted(
+        f for f in os.listdir(config.target_area_dir)
+        if f.lower().endswith(".gpkg") and not f.startswith("."))    
+    
     for gdf in gdfs:
         gdf_path = os.path.join(config.target_area_dir, gdf)
+
+
         gdf_loaded = gpd.read_file(gdf_path)
         if len(gdf_loaded) > 1:
             print("\n--- Target areas are multi-geometry. Splitting into separate files ---")

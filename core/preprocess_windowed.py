@@ -163,6 +163,8 @@ def process_strip(
     pipeline = [
         # read raw LAS (ellipsoidal heights)
         {"type": "readers.las", "filename": input_file},
+        
+        {"type": "filters.crop", "polygon": target_gdf},
 
         # reproject vertical only: ellipsoid→EGM2008
         {"type": "filters.reprojection",
@@ -181,7 +183,7 @@ def process_strip(
         },
 
         # clamp to your Z-range (now orthometric)
-        #{"type": "filters.range", "limits": f"Z[{min_z}:{max_z}]"},
+        {"type": "filters.range", "limits": f"Z[{min_z}:{max_z}]"},
 
         # drop noise class 7
         {"type": "filters.range", "limits": "Classification![7:7]"},

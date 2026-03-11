@@ -19,7 +19,7 @@ def main() -> None:
     config = configuration.Configuration()
 
     # --- EDIT THESE TO YOUR PATHS ---
-    config.run_name = "Merge_Till"
+    config.run_name = "Inuvik"
     config.target_area_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/data/area"
     config.las_files_dir = "/isipd/projects/p_planetdw/data/lidar/02_pointclouds/2023"
     config.las_footprints_dir = "/isipd/projects/p_planetdw/data/lidar/03_las_footprints/2023"
@@ -28,7 +28,7 @@ def main() -> None:
 
 
     config.overlap = 0.2
-    
+
     config.create_DSM = True
     config.create_DEM = True
     config.create_CHM = False
