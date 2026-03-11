@@ -34,12 +34,38 @@ class Configuration:
         self.multiple_targets = False  # If target areas are saved in one gdf set to True
         self.target_name_field = 'fid'  # Field in target area gdf to use as target name
 
+        self.preprocess_by_strip = True  # Whether to preserve strip boundaries while chunking (chunk or strip)
+        self.chunk_size = 1000  # chunk size (m) for preprocessing
+
         # elevation outlier cap (quantile in [0–1])
         self.max_elevation_threshold = 0.99  # Higher removes more high outliers (aircraft/atmosphere). Typical 0.98–0.9995.
 
         # SOR parameters (Statistical Outlier Removal)
-        self.knn = 100  # neighbors for stats. 50–200 is common. Higher = stabler but slower.
-        self.multiplier = 1  # (mean + m*std). Lower (0.8–1.2) = aggressive; higher (1.5–2.5) = conservative.
+        self.sor_knn = 100  # neighbors for stats. 50–200 is common. Higher = stabler but slower.
+        self.sor_multiplier = 1  # (mean + m*std). Lower (0.8–1.2) = aggressive; higher (1.5–2.5) = conservative.
+
+        # ------ PREPROCESSING ------
+        # ICP switch
+        self.enable_icp = True
+
+        # ICP-ready strip creation
+        self.icp_use_ground_only = True
+        self.icp_min_ground_points = 800
+        self.icp_voxel_size = 1.0
+
+        # SMRF ground classification
+        self.smrf_window_size = 20.0
+        self.smrf_slope = 0.2
+        self.smrf_scalar = 2.0
+        self.threshold = 0.5
+
+        # ICP registration
+        self.icp_max_correspondence_distance = 2.0
+        self.icp_max_iterations = 80
+
+        # overlap filtering before ICP
+        self.icp_overlap_buffer = 0.0
+        self.icp_min_overlap_points = 2500
 
         # ------- PROCESSING --------
 
