@@ -184,8 +184,8 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
     os.makedirs(temp_folder, exist_ok=True)
     
     start_time = time.time()
-    las_files = glob.glob(os.path.join(input_folder, run_name, "*.las")) + \
-                glob.glob(os.path.join(input_folder, run_name, "*.laz"))
+    las_files = glob.glob(os.path.join(input_folder, "*.las")) + \
+                glob.glob(os.path.join(input_folder, "*.laz"))
     
     if not las_files:
         print("No LAS/LAZ files found. Exiting DTM generation.")

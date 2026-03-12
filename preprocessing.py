@@ -200,7 +200,7 @@ def merge_and_clean_las(
         target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
 
         # -------------------------------------------------------------
-        # strip-preserving chunked mode
+        # strip-preserving mode
         # -------------------------------------------------------------
         if config.preprocess_by_strip:
             processed_strip_files = []
@@ -265,11 +265,21 @@ def merge_and_clean_las(
                 )
 
             if processed_strip_files:
+
+                merged_aligned_file = os.path.join(run_merged_dir,f"{target_fp}_aligned_merged.laz")
+                merge_and_crop_strips(
+                    processed_strip_files,
+                    target_geom_wkt,
+                    merged_aligned_file
+                )
+            
+                '''
                 merge_and_crop_strips(
                     processed_strip_files,
                     target_geom_wkt,
                     final_output_file
                 )
+                '''
                 print(f"Final processed LAS file saved: {final_output_file}")
             else:
                 print(f"No processed strips available for {target_fp}.")

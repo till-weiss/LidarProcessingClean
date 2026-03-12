@@ -64,6 +64,8 @@ class Configuration:
         self.icp_max_iterations = 80
 
         # overlap filtering before ICP
+        self.icp_max_candidate_targets = 3
+        self.icp_min_bbox_overlap_ratio = 0.05
         self.icp_overlap_buffer = 0.0
         self.icp_min_overlap_points = 2500
 
