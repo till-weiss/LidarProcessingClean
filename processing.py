@@ -94,9 +94,9 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
     os.makedirs(temp_folder, exist_ok=True)
 
     start_time = time.time()
-    las_files = glob.glob(os.path.join(input_folder, run_name, "*.las")) + \
-                glob.glob(os.path.join(input_folder, run_name, "*.laz"))
-
+    las_files = glob.glob(os.path.join(input_folder, "*.las")) + \
+                glob.glob(os.path.join(input_folder, "*.laz"))
+    
     if not las_files:
         print("No LAS/LAZ files found. Exiting DSM generation.")
         return
@@ -365,20 +365,17 @@ def generate_chm(input_folder, output_folder, run_name):
 
 
 def process_all(config):
-    """
-    Runs DSM generation using cleaned LAS files.
-
-    Reads from: `config.preprocessed_dir`
-    Saves to: `config.results_dir / run_name / .../`
-    """
     print('Starting Processing ...')
 
     start_time = time.time()
 
+    # use merged files, not aligned_strips
+    input_folder = os.path.join(config.preprocessed_dir, config.run_name)
+
     if config.create_DSM:
         print("\n========== Starting DSM Generation ==========")
         generate_dsm(
-            input_folder=config.preprocessed_dir,
+            input_folder=input_folder,
             output_folder=config.results_dir,
             run_name=config.run_name,
             resolution=config.resolution,
@@ -388,13 +385,11 @@ def process_all(config):
             method=config.point_density_method,
             chunk_overlap=config.chunk_overlap
         )
-    
-    
 
     if config.create_DEM:
         print("\n========== Starting DEM Generation ==========")
         generate_dtm(
-            input_folder=config.preprocessed_dir,
+            input_folder=input_folder,
             output_folder=config.results_dir,
             run_name=config.run_name,
             resolution=config.resolution,
@@ -404,11 +399,11 @@ def process_all(config):
             scalar=config.smrf_scalar,
             slope=config.smrf_slope,
             window=config.smrf_window_size, 
-            rigidness = config.csf_rigidness,
+            rigidness=config.csf_rigidness,
             time_step=config.csf_time_step,
             cloth_resolution=config.csf_cloth_resolution,
-            iterations = config.csf_iterations,
-            num_workers= config.num_workers,
+            iterations=config.csf_iterations,
+            num_workers=config.num_workers,
             chunk_overlap=config.chunk_overlap,
             filter_smrf=config.smrf_filter,
             filter_csf=config.csf_filter,

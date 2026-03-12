@@ -291,6 +291,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     aoi_name = os.path.splitext(str(target_fp))[0]
 
+    preprocessed_root = os.path.join(config.preprocessed_dir, config.run_name)
     preprocessed_aoi_root = os.path.join(config.preprocessed_dir, config.run_name, aoi_name)
     logs_dir = os.path.join(preprocessed_aoi_root, "logs")
     aligned_dir = os.path.join(preprocessed_aoi_root, "aligned_strips")
@@ -493,7 +494,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         )
 
     merged_aligned_file = os.path.join(
-        preprocessed_aoi_root,
+        preprocessed_root,
         f"{aoi_name}_aligned_merged.laz"
     )
 
@@ -504,7 +505,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     shutil.rmtree(temp_icp_dir, ignore_errors=True)
     return aligned_outputs
 
-def merge_aligned_strips(strip_files, output_file):
+""" def merge_aligned_strips(strip_files, output_file):
     if not strip_files:
         return None
 
@@ -530,4 +531,4 @@ def merge_aligned_strips(strip_files, output_file):
 
     pdal.Pipeline(json.dumps(pipeline)).execute()
 
-    return output_file
+    return output_file """
