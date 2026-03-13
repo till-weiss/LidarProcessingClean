@@ -69,6 +69,11 @@ class Configuration:
         self.icp_overlap_buffer = 0.0
         self.icp_min_overlap_points = 2500
 
+        self.icp_min_bbox_overlap_ratio = 0.05
+        self.icp_min_overlap_points = 2500
+        self.icp_min_fitness = 0.60
+        self.icp_max_rmse = 2
+        self.icp_max_shift_m = 5.0
         # ------- PROCESSING --------
 
         self.create_DSM = False

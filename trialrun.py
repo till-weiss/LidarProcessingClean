@@ -19,10 +19,10 @@ def main() -> None:
     config = configuration.Configuration()
 
     # --- EDIT THESE TO YOUR PATHS ---
-    config.run_name = "Inuvik_DSM_DTM"
+    config.run_name = "Peel_2025"
     config.target_area_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/data/area"
-    config.las_files_dir = "/isipd/projects/p_planetdw/data/lidar/02_pointclouds/2023"
-    config.las_footprints_dir = "/isipd/projects/p_planetdw/data/lidar/03_las_footprints/2023"
+    config.las_files_dir = "/isipd/projects/p_planetdw/data/lidar/02_pointclouds/2025"
+    config.las_footprints_dir = "/isipd/projects/p_planetdw/data/lidar/03_las_footprints/2025"
     config.preprocessed_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/preprocessed"
     config.results_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results"
 

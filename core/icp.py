@@ -284,7 +284,19 @@ def apply_transform_to_strip(input_strip, output_strip, transform):
 
 
 def align_strips_incremental_icp(processed_strip_files, target_fp, config):
-    """Sequential strip alignment: first strip fixed, each next strip aligned to previous aligned strip."""
+    """
+    Sequential strip alignment:
+    - first strip is the initial active reference
+    - each following strip is checked against the current active reference
+    - if bbox overlap is too small -> keep as fallback and promote source as next active reference
+    - if ICP quality is poor -> keep as fallback and promote source as next active reference
+    - if ICP succeeds -> keep aligned strip and promote aligned strip as next active reference
+
+    Outputs:
+    - aligned_outputs: strips successfully aligned with ICP (+ fixed first strip)
+    - fallback_outputs: strips kept but not aligned
+    - discarded_outputs: strips that could not be processed properly
+    """
 
     if len(processed_strip_files) < 2 or not getattr(config, "enable_icp", True):
         return processed_strip_files
@@ -320,8 +332,17 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     log_file = os.path.join(logs_dir, "icp_log.jsonl")
 
+    min_bbox_overlap = float(getattr(config, "icp_min_bbox_overlap_ratio", 0.05))
+    min_overlap_points = int(getattr(config, "icp_min_overlap_points", 2500))
+    min_fitness = float(getattr(config, "icp_min_fitness", 0.60))
+    max_rmse = float(getattr(config, "icp_max_rmse", 0.80))
+    max_shift = float(getattr(config, "icp_max_shift_m", 3.0))
+
     icp_ready_original_by_strip = {}
 
+    # ------------------------------------------------------------------
+    # Build ICP-ready versions for all original strips
+    # ------------------------------------------------------------------
     for strip in ordered:
         strip_base = os.path.splitext(os.path.basename(strip))[0]
         out_icp_ready = os.path.join(icp_ready_dir, f"{strip_base}_icp_ready.laz")
@@ -341,14 +362,15 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         icp_ready_original_by_strip[strip] = icp_path
 
     aligned_outputs = []
-    aligned_icp_ready_by_full_strip = {}
-
-    # only strips in this list are allowed as ICP targets for later strips
-    valid_icp_targets = []
     fallback_outputs = []
+    discarded_outputs = []
 
+    # ------------------------------------------------------------------
+    # First strip becomes fixed start strip and initial active reference
+    # ------------------------------------------------------------------
     first_base, first_ext = os.path.splitext(os.path.basename(ordered[0]))
     fixed_first = os.path.join(aligned_dir, f"{first_base}_fixed{first_ext}")
+
     if os.path.abspath(ordered[0]) != os.path.abspath(fixed_first):
         shutil.copy2(ordered[0], fixed_first)
 
@@ -358,25 +380,51 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         return processed_strip_files
 
     aligned_outputs.append(fixed_first)
-    aligned_icp_ready_by_full_strip[fixed_first] = icp_ready_original_by_strip.get(ordered[0])
-    valid_icp_targets.append(fixed_first)
 
-    max_candidates = int(getattr(config, "icp_max_candidate_targets", 3))
-    min_bbox_overlap = float(getattr(config, "icp_min_bbox_overlap_ratio", 0.05))
+    current_reference = fixed_first
+    current_reference_icp_ready = icp_ready_original_by_strip.get(ordered[0])
 
-    for idx, source in enumerate(ordered[1:], start=1):
+    print(f"[ICP] Start reference: {os.path.basename(current_reference)}")
+
+    # ------------------------------------------------------------------
+    # Process following strips against current active reference
+    # ------------------------------------------------------------------
+    for source in ordered[1:]:
         start_pair = time.time()
 
         source_name = os.path.splitext(os.path.basename(source))[0]
+        target_name = os.path.splitext(os.path.basename(current_reference))[0]
+        pair_id = f"{source_name}_to_{target_name}"
 
         source_icp_ready_path = icp_ready_original_by_strip.get(source)
 
-        _, src_xyz_full, src_cls_full = read_las_points(source)
+        try:
+            _, src_xyz_full, src_cls_full = read_las_points(source)
 
-        if source_icp_ready_path and os.path.exists(source_icp_ready_path):
-            _, src_icp_full, src_icp_cls = read_las_points(source_icp_ready_path)
-        else:
-            src_icp_full, src_icp_cls = src_xyz_full, src_cls_full
+            if source_icp_ready_path and os.path.exists(source_icp_ready_path):
+                _, src_icp_full, src_icp_cls = read_las_points(source_icp_ready_path)
+            else:
+                src_icp_full, src_icp_cls = src_xyz_full, src_cls_full
+
+            if current_reference_icp_ready and os.path.exists(current_reference_icp_ready):
+                _, tgt_icp_full, _ = read_las_points(current_reference_icp_ready)
+            else:
+                _, tgt_icp_full, _ = read_las_points(current_reference)
+
+        except Exception as e:
+            print(f"[ICP] Failed reading source/reference for {pair_id}: {e}")
+            discarded_outputs.append(source)
+            continue
+
+        if src_icp_full is None or len(src_icp_full) == 0:
+            print(f"[ICP] Discarding {os.path.basename(source)}: source ICP cloud is empty")
+            discarded_outputs.append(source)
+            continue
+
+        if tgt_icp_full is None or len(tgt_icp_full) == 0:
+            print(f"[ICP] Discarding {os.path.basename(source)}: reference ICP cloud is empty")
+            discarded_outputs.append(source)
+            continue
 
         src_poly = box(
             np.min(src_icp_full[:, 0]),
@@ -385,106 +433,52 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             np.max(src_icp_full[:, 1]),
         )
 
-        best_target = None
-        best_target_icp_ready_path = None
-        best_target_icp_full = None
-        best_overlap_ratio = 0.0
-        best_overlap_geom = None
+        tgt_poly = box(
+            np.min(tgt_icp_full[:, 0]),
+            np.min(tgt_icp_full[:, 1]),
+            np.max(tgt_icp_full[:, 0]),
+            np.max(tgt_icp_full[:, 1]),
+        )
 
-        candidate_targets = valid_icp_targets[-max_candidates:]
+        overlap_ratio = overlap_ratio_from_polygons(src_poly, tgt_poly)
 
-        for candidate in candidate_targets:
-            if os.path.abspath(source) == os.path.abspath(candidate):
-                continue
+        print(
+            f"[ICP] Checking {os.path.basename(source)} against reference "
+            f"{os.path.basename(current_reference)} | bbox overlap={overlap_ratio:.3f}"
+        )
 
-            candidate_icp_ready_path = aligned_icp_ready_by_full_strip.get(candidate)
-
-            try:
-                if candidate_icp_ready_path and os.path.exists(candidate_icp_ready_path):
-                    _, cand_icp_full, _ = read_las_points(candidate_icp_ready_path)
-                else:
-                    _, cand_icp_full, _ = read_las_points(candidate)
-
-                cand_poly = box(
-                    np.min(cand_icp_full[:, 0]),
-                    np.min(cand_icp_full[:, 1]),
-                    np.max(cand_icp_full[:, 0]),
-                    np.max(cand_icp_full[:, 1]),
-                )
-
-                overlap_geom = src_poly.intersection(cand_poly).buffer(
-                    float(getattr(config, "icp_overlap_buffer", 0.0))
-                )
-
-                overlap_ratio = overlap_ratio_from_polygons(src_poly, cand_poly)
-
-                print(
-                    f"[ICP] Candidate target for {os.path.basename(source)}: "
-                    f"{os.path.basename(candidate)} | bbox overlap={overlap_ratio:.3f}"
-                )
-
-                if overlap_ratio > best_overlap_ratio and not overlap_geom.is_empty:
-                    best_target = candidate
-                    best_target_icp_ready_path = candidate_icp_ready_path
-                    best_target_icp_full = cand_icp_full
-                    best_overlap_ratio = overlap_ratio
-                    best_overlap_geom = overlap_geom
-
-            except Exception as e:
-                print(
-                    f"[ICP] Candidate check failed for "
-                    f"{os.path.basename(source)} vs {os.path.basename(candidate)}: {e}"
-                )
-
-        if best_target is None or best_overlap_ratio < min_bbox_overlap:
+        # --------------------------------------------------------------
+        # Too little overlap -> keep as fallback and promote source
+        # --------------------------------------------------------------
+        if overlap_ratio < min_bbox_overlap:
             print(
-                f"[ICP] No suitable target found for {os.path.basename(source)} "
-                f"(best bbox overlap={best_overlap_ratio:.3f})"
+                f"[ICP] Keeping {os.path.basename(source)} as fallback: "
+                f"bbox overlap too small ({overlap_ratio:.3f} < {min_bbox_overlap:.3f})"
             )
+            fallback_outputs.append(source)
 
-            fallback_out = os.path.join(aligned_dir, os.path.basename(source))
-            if os.path.abspath(source) != os.path.abspath(fallback_out):
-                shutil.copy2(source, fallback_out)
-
-            if os.path.exists(fallback_out):
-                aligned_outputs.append(fallback_out)
-                fallback_outputs.append(fallback_out)
-                aligned_icp_ready_by_full_strip[fallback_out] = source_icp_ready_path
-            else:
-                print(f"[ICP] Failed to save fallback strip: {fallback_out}")
-
+            current_reference = source
+            current_reference_icp_ready = source_icp_ready_path
+            print(f"[ICP] Active reference moved to fallback strip: {os.path.basename(current_reference)}")
             continue
 
-        target_full = best_target
-        target_icp_ready_path = best_target_icp_ready_path
-        tgt_icp_full = best_target_icp_full
+        overlap_geom = src_poly.intersection(tgt_poly).buffer(
+            float(getattr(config, "icp_overlap_buffer", 0.0))
+        )
 
-        target_name = os.path.splitext(os.path.basename(target_full))[0]
-        pair_id = f"{source_name}_to_{target_name}"
+        if overlap_geom.is_empty:
+            print(
+                f"[ICP] Keeping {os.path.basename(source)} as fallback: "
+                f"overlap geometry is empty"
+            )
+            fallback_outputs.append(source)
 
-        if os.path.abspath(source) == os.path.abspath(target_full):
-            print(f"[ICP] Skipping self-alignment for {pair_id}")
+            current_reference = source
+            current_reference_icp_ready = source_icp_ready_path
+            print(f"[ICP] Active reference moved to fallback strip: {os.path.basename(current_reference)}")
             continue
 
-        overlap = best_overlap_geom
-
-        if overlap.is_empty:
-            print(f"[ICP] Skipping {pair_id}: overlap too small")
-
-            fallback_out = os.path.join(aligned_dir, os.path.basename(source))
-            if os.path.abspath(source) != os.path.abspath(fallback_out):
-                shutil.copy2(source, fallback_out)
-
-            if os.path.exists(fallback_out):
-                aligned_outputs.append(fallback_out)
-                fallback_outputs.append(fallback_out)
-                aligned_icp_ready_by_full_strip[fallback_out] = source_icp_ready_path
-            else:
-                print(f"[ICP] Failed to save fallback strip: {fallback_out}")
-
-            continue
-
-        minx, miny, maxx, maxy = overlap.bounds
+        minx, miny, maxx, maxy = overlap_geom.bounds
 
         src_mask = (
             (src_icp_full[:, 0] >= minx)
@@ -502,40 +496,71 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         src_ov = src_icp_full[src_mask]
         tgt_ov = tgt_icp_full[tgt_mask]
 
-        min_overlap_points = int(getattr(config, "icp_min_overlap_points", 2500))
-        if len(src_ov) < min_overlap_points or len(tgt_ov) < min_overlap_points:
-            print(
-                f"[ICP] Skipping {pair_id}: too few overlap points "
-                f"(src={len(src_ov)}, tgt={len(tgt_ov)})"
-            )
-
-            fallback_out = os.path.join(aligned_dir, os.path.basename(source))
-            if os.path.abspath(source) != os.path.abspath(fallback_out):
-                shutil.copy2(source, fallback_out)
-
-            if os.path.exists(fallback_out):
-                aligned_outputs.append(fallback_out)
-                fallback_outputs.append(fallback_out)
-                aligned_icp_ready_by_full_strip[fallback_out] = source_icp_ready_path
-            else:
-                print(f"[ICP] Failed to save fallback strip: {fallback_out}")
-
-            continue
-
-        src_icp = src_ov
-        tgt_icp = tgt_ov
-
-        icp_result = run_pair_icp(
-            src_icp,
-            tgt_icp,
-            config,
-            source,
-            target_full,
-            log_file=log_file,
-            source_icp_ready_file=source_icp_ready_path,
-            target_icp_ready_file=target_icp_ready_path,
+        print(
+            f"[ICP] Overlap crop for {pair_id}: "
+            f"src={len(src_ov)}, tgt={len(tgt_ov)}"
         )
 
+        if len(src_ov) < min_overlap_points or len(tgt_ov) < min_overlap_points:
+            print(
+                f"[ICP] Keeping {os.path.basename(source)} as fallback: too few overlap points "
+                f"(src={len(src_ov)}, tgt={len(tgt_ov)})"
+            )
+            fallback_outputs.append(source)
+
+            current_reference = source
+            current_reference_icp_ready = source_icp_ready_path
+            print(f"[ICP] Active reference moved to fallback strip: {os.path.basename(current_reference)}")
+            continue
+
+        # --------------------------------------------------------------
+        # Run ICP
+        # --------------------------------------------------------------
+        icp_result = run_pair_icp(
+            src_ov,
+            tgt_ov,
+            config,
+            source,
+            current_reference,
+            log_file=log_file,
+            source_icp_ready_file=source_icp_ready_path,
+            target_icp_ready_file=current_reference_icp_ready,
+        )
+
+        fitness = float(icp_result["registration"].fitness)
+        rmse = float(icp_result["registration"].inlier_rmse)
+        shift = float(icp_result["relative_shift_norm"])
+
+        is_identity = np.allclose(icp_result["transform_local"], np.eye(4), atol=1e-10)
+
+        if fitness == 0.0 or (is_identity and rmse == 0.0):
+            print(
+                f"[ICP] Keeping {os.path.basename(source)} as fallback: "
+                f"ICP returned no valid alignment"
+            )
+            fallback_outputs.append(source)
+
+            current_reference = source
+            current_reference_icp_ready = source_icp_ready_path
+            print(f"[ICP] Active reference moved to fallback strip: {os.path.basename(current_reference)}")
+            continue
+
+        if fitness < min_fitness or rmse > max_rmse or shift > max_shift:
+            print(
+                f"[ICP] Keeping {os.path.basename(source)} as fallback: "
+                f"quality check failed "
+                f"(fitness={fitness:.4f}, rmse={rmse:.4f}, shift={shift:.4f} m)"
+            )
+            fallback_outputs.append(source)
+
+            current_reference = source
+            current_reference_icp_ready = source_icp_ready_path
+            print(f"[ICP] Active reference moved to fallback strip: {os.path.basename(current_reference)}")
+            continue
+
+        # --------------------------------------------------------------
+        # Apply accepted transform
+        # --------------------------------------------------------------
         transform = icp_result["transform_global"]
 
         source_base, source_ext = os.path.splitext(os.path.basename(source))
@@ -545,22 +570,10 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
         if not os.path.exists(aligned_source):
             print(f"[ICP] Failed to save aligned strip: {aligned_source}")
-
-            fallback_out = os.path.join(aligned_dir, os.path.basename(source))
-            if os.path.abspath(source) != os.path.abspath(fallback_out):
-                shutil.copy2(source, fallback_out)
-
-            if os.path.exists(fallback_out):
-                aligned_outputs.append(fallback_out)
-                fallback_outputs.append(fallback_out)
-                aligned_icp_ready_by_full_strip[fallback_out] = source_icp_ready_path
-            else:
-                print(f"[ICP] Failed to save fallback strip: {fallback_out}")
-
+            discarded_outputs.append(source)
             continue
 
         aligned_outputs.append(aligned_source)
-        valid_icp_targets.append(aligned_source)
 
         aligned_icp_ready_path = os.path.join(
             icp_ready_dir,
@@ -579,39 +592,57 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             print(f"[ICP] Warning: aligned ICP-ready strip was not saved for {aligned_source}")
             out_ready = None
 
-        aligned_icp_ready_by_full_strip[aligned_source] = out_ready
+        current_reference = aligned_source
+        current_reference_icp_ready = out_ready
 
         elapsed = time.time() - start_pair
         print(
             f"[ICP] Finished {pair_id} in {elapsed:.2f}s | "
-            f"fitness={icp_result['registration'].fitness:.4f} | "
-            f"rmse={icp_result['registration'].inlier_rmse:.4f} | "
-            f"shift={icp_result['relative_shift_norm']:.4f} m"
+            f"fitness={fitness:.4f} | rmse={rmse:.4f} | shift={shift:.4f} m"
         )
+        print(f"[ICP] New active reference set to aligned strip: {os.path.basename(current_reference)}")
 
-    # --- merge only ICP-aligned strips ---
-    aligned_only = [s for s in aligned_outputs if s not in fallback_outputs]
-
+    # ------------------------------------------------------------------
+    # Merge only ICP-aligned strips
+    # ------------------------------------------------------------------
     merged_aligned_file = os.path.join(
         preprocessed_root,
         f"{aoi_name}_aligned_merged.laz"
     )
 
-    merge_aligned_strips(aligned_only, merged_aligned_file)
+    if aligned_outputs:
+        merge_aligned_strips(aligned_outputs, merged_aligned_file)
+        print(f"[ICP] Saved ICP-aligned point cloud: {merged_aligned_file}")
+    else:
+        print("[ICP] No aligned strips available for aligned-only merge.")
 
-    print(f"[ICP] Saved ICP-aligned point cloud: {merged_aligned_file}")
-
-
-    # --- merge including fallback strips ---
+    # ------------------------------------------------------------------
+    # Merge aligned + fallback strips
+    # ------------------------------------------------------------------
     merged_all_file = os.path.join(
         preprocessed_root,
         f"{aoi_name}_aligned_with_fallback_merged.laz"
     )
 
-    merge_aligned_strips(aligned_outputs, merged_all_file)
+    all_kept_outputs = aligned_outputs + fallback_outputs
 
-    print(f"[ICP] Saved merged point cloud including fallback strips: {merged_all_file}")
-    return aligned_outputs
+    if all_kept_outputs:
+        merge_aligned_strips(all_kept_outputs, merged_all_file)
+        print(f"[ICP] Saved merged point cloud including fallback strips: {merged_all_file}")
+    else:
+        print("[ICP] No strips available for aligned+fallback merge.")
+
+    if fallback_outputs:
+        print("[ICP] Fallback strips:")
+        for strip in fallback_outputs:
+            print(f"  - {os.path.basename(strip)}")
+
+    if discarded_outputs:
+        print("[ICP] Discarded strips:")
+        for strip in discarded_outputs:
+            print(f"  - {os.path.basename(strip)}")
+
+    return all_kept_outputs
 
 def merge_aligned_strips(strip_files, output_file):
     if not strip_files:
@@ -639,4 +670,4 @@ def merge_aligned_strips(strip_files, output_file):
 
     pdal.Pipeline(json.dumps(pipeline)).execute()
 
-    return output_file 
+    return output_file
