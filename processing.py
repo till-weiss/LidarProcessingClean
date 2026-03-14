@@ -187,6 +187,10 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
     las_files = glob.glob(os.path.join(input_folder, "*.las")) + \
                 glob.glob(os.path.join(input_folder, "*.laz"))
     
+    print("Input LAS/LAZ files for DTM:")
+    for f in las_files:
+        print(f)
+
     if not las_files:
         print("No LAS/LAZ files found. Exiting DTM generation.")
         return

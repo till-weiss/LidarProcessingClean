@@ -609,6 +609,12 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         preprocessed_root,
         f"{aoi_name}_aligned_merged.laz"
     )
+    with open(log_file, "a") as f:
+        json.dump({
+            "stage": "aligned_merge",
+            "aligned_outputs": [os.path.basename(x) for x in aligned_outputs]
+        }, f)
+        f.write("\n")
 
     if aligned_outputs:
         merge_aligned_strips(aligned_outputs, merged_aligned_file)
@@ -623,6 +629,14 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         preprocessed_root,
         f"{aoi_name}_aligned_with_fallback_merged.laz"
     )
+    
+    with open(log_file, "a") as f:
+        json.dump({
+            "stage": "aligned_with_fallback_merge",
+            "aligned_outputs": [os.path.basename(x) for x in aligned_outputs],
+            "fallback_outputs": [os.path.basename(x) for x in fallback_outputs]
+        }, f)
+        f.write("\n")
 
     all_kept_outputs = aligned_outputs + fallback_outputs
 
