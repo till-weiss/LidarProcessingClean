@@ -74,6 +74,19 @@ class Configuration:
         self.icp_min_fitness = 0.60
         self.icp_max_rmse = 2
         self.icp_max_shift_m = 5.0
+        
+        '''# ICP settings
+        config.icp_min_bbox_overlap_ratio = 0.05
+        config.icp_min_overlap_points = 2500
+        config.icp_min_fitness = 0.6
+        config.icp_max_rmse = 0.8
+        config.icp_max_shift_m = 3.0
+        config.icp_max_shift_xy_m = 2.0
+        config.icp_max_shift_z_m = 1.5
+        config.icp_overlap_buffer = 0.0
+        config.icp_max_passes = 5'''
+
+
         # ------- PROCESSING --------
 
         self.create_DSM = False

@@ -19,7 +19,7 @@ def main() -> None:
     config = configuration.Configuration()
 
     # --- EDIT THESE TO YOUR PATHS ---
-    config.run_name = "Inuvik_2023"
+    config.run_name = "Inuvik_2023_3"
     config.target_area_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/data/area"
     config.las_files_dir = "/isipd/projects/p_planetdw/data/lidar/02_pointclouds/2023"
     config.las_footprints_dir = "/isipd/projects/p_planetdw/data/lidar/03_las_footprints/2023"
@@ -68,7 +68,7 @@ def main() -> None:
     run_pre_dir = Path(config.preprocessed_dir) / config.run_name
 
     for target, raw_points in raw_points_by_target.items():
-        cleaned_las = run_pre_dir / f"{Path(target).stem}.las"
+        cleaned_las = run_pre_dir / f"{Path(target).stem}.laz"
         if not cleaned_las.exists():
             print(f"  {Path(target).stem}: NOT FOUND -> {cleaned_las}")
             continue

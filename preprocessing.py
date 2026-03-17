@@ -258,31 +258,39 @@ def merge_and_clean_las(
 
             if getattr(config, "enable_icp", True) and len(processed_strip_files) > 1:
                 print(f"Running sequential ICP strip alignment for {target_fp}...")
-                processed_strip_files = align_strips_incremental_icp(
+                icp_result = align_strips_incremental_icp(
                     processed_strip_files=processed_strip_files,
                     target_fp=target_fp,
                     config=config,
                 )
 
-            if processed_strip_files:
+                accepted_outputs = icp_result.get("accepted_outputs", [])
+                fallback_outputs = icp_result.get("fallback_outputs", [])
+                discarded_outputs = icp_result.get("discarded_outputs", [])
 
-                merged_aligned_file = os.path.join(run_merged_dir,f"{target_fp}_aligned_merged.laz")
-                merge_and_crop_strips(
-                    processed_strip_files,
-                    target_geom_wkt,
-                    merged_aligned_file
-                )
-            
-                '''
-                merge_and_crop_strips(
-                    processed_strip_files,
-                    target_geom_wkt,
-                    final_output_file
-                )
-                '''
-                print(f"Final processed LAS file saved: {final_output_file}")
-            else:
-                print(f"No processed strips available for {target_fp}.")
+                if accepted_outputs:
+                    merged_aligned_file = os.path.join(
+                        run_merged_dir, f"{target_fp}_aligned_merged.laz"
+                    )
+                    merge_and_crop_strips(
+                        accepted_outputs,
+                        target_geom_wkt,
+                        merged_aligned_file
+                    )
+                else:
+                    print(f"No accepted ICP strips available for {target_fp}.")
+
+                all_outputs = accepted_outputs + fallback_outputs
+                if all_outputs:
+                    final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
+                    merge_and_crop_strips(
+                        all_outputs,
+                        target_geom_wkt,
+                        final_output_file
+                    )
+                    print(f"Final processed LAS file saved: {final_output_file}")
+                else:
+                    print(f"No processed strips available for {target_fp}.")
 
         # -------------------------------------------------------------
         # original chunk mode
