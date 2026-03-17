@@ -13,7 +13,6 @@ from shapely.geometry import box
 
 from collections import defaultdict
 
-
 def extract_start_timestamp(strip_path):
     """Extract acquisition start timestamp from filename, e.g. 20230707T165034."""
     file_name = os.path.basename(strip_path)
@@ -299,6 +298,99 @@ def apply_transform_to_strip(input_strip, output_strip, transform):
 
     pdal.Pipeline(json.dumps(pipeline)).execute()
 
+def merge_aligned_strips(strip_files, output_file):
+    """
+    Merge a list of LAS/LAZ strips into a single LAS/LAZ output using PDAL.
+    """
+    if not strip_files:
+        return None
+
+    for f in strip_files:
+        if not os.path.exists(f):
+            raise FileNotFoundError(f"Input strip does not exist: {f}")
+
+    pipeline = {"pipeline": []}
+
+    for f in strip_files:
+        pipeline["pipeline"].append({
+            "type": "readers.las",
+            "filename": f
+        })
+
+    pipeline["pipeline"].append({"type": "filters.merge"})
+    pipeline["pipeline"].append({
+        "type": "writers.las",
+        "filename": output_file,
+        "compression": "laszip"
+    })
+
+    pdal.Pipeline(json.dumps(pipeline)).execute()
+    return output_file
+
+def get_aoi_name(target_fp):
+    """Extract AOI name from footprint path or filename."""
+    return os.path.splitext(os.path.basename(str(target_fp)))[0]
+
+
+def extract_year_from_strip_filename(strip_path):
+    """
+    Extract year from filenames like:
+    FULL_ALS_L1B_20230707T152300_153124_mta2_utm_aoi.laz
+    -> 2023
+    """
+    name = os.path.basename(strip_path)
+    match = re.search(r"(\d{4})\d{4}T\d{6}", name)
+    if match:
+        return match.group(1)
+    return "unknownyear"
+
+
+def build_cluster_output_filename(target_fp, strip_path, cluster_id):
+    """
+    Build merged cluster output filename including AOI name and year.
+    Example:
+    WC_PeelSlumps_20230707_15cm_01_2023_cluster_1.laz
+    """
+    aoi_name = get_aoi_name(target_fp)
+    year = extract_year_from_strip_filename(strip_path)
+    return f"{aoi_name}_{year}_cluster_{cluster_id}.laz"
+
+
+def save_fixed_seed_strip(strip_path, aligned_dir):
+    """
+    Save a fixed copy of the initial seed strip into aligned_dir.
+    Returns path to the fixed file.
+    """
+    base, ext = os.path.splitext(os.path.basename(strip_path))
+    fixed_path = os.path.join(aligned_dir, f"{base}_fixed{ext}")
+
+    if os.path.abspath(strip_path) != os.path.abspath(fixed_path):
+        shutil.copy2(strip_path, fixed_path)
+
+    if not os.path.exists(fixed_path):
+        raise RuntimeError(f"Failed to save fixed seed strip: {fixed_path}")
+
+    return fixed_path
+
+
+def save_cluster_laz(cluster_members, cluster_dir, target_fp, cluster_id, source_strip_for_year):
+    """
+    Merge one cluster and save it with AOI name + year + cluster id.
+    Returns output file path.
+    """
+    output_name = build_cluster_output_filename(
+        target_fp=target_fp,
+        strip_path=source_strip_for_year,
+        cluster_id=cluster_id,
+    )
+    output_path = os.path.join(cluster_dir, output_name)
+
+    merge_aligned_strips(cluster_members, output_path)
+
+    if not os.path.exists(output_path):
+        raise RuntimeError(f"Cluster output was not created: {output_path}")
+
+    return output_path
 
 def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     """
@@ -338,22 +430,6 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         key=extract_start_timestamp
     )
 
-    # --------------------------------------------------------------
-    # Remove likely crossing strips before ICP
-    # --------------------------------------------------------------
-    #icp_candidates = []
-    #crossing_strips = []
-
-    #for f in ordered:
-    #    if is_crossing_strip(f, ratio_threshold=3):
-    #        crossing_strips.append(f)
-    #        print(f"[ICP] Excluding crossing strip from ICP: {os.path.basename(f)}")
-    #    else:
-    #        icp_candidates.append(f)
-
-    # use only non-crossing strips for ICP
-    #ordered = icp_candidates
-
     if len(ordered) < 2:
         return {
             "accepted_outputs": processed_strip_files,
@@ -367,9 +443,8 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     for idx, strip in enumerate(ordered, start=1):
         print(f"  {idx:02d}. {os.path.basename(strip)}")
 
-    aoi_name = os.path.splitext(os.path.basename(str(target_fp)))[0]
-    
-    preprocessed_root = os.path.join(config.preprocessed_dir, config.run_name)
+    aoi_name = get_aoi_name(target_fp)
+
     preprocessed_aoi_root = os.path.join(config.preprocessed_dir, config.run_name, aoi_name)
 
     logs_dir = os.path.join(preprocessed_aoi_root, "logs")
@@ -467,21 +542,6 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         }
 
     # ------------------------------------------------------------------
-    # Helper to create a fixed seed strip
-    # ------------------------------------------------------------------
-    def make_fixed_copy(strip_path):
-        base, ext = os.path.splitext(os.path.basename(strip_path))
-        fixed_path = os.path.join(aligned_dir, f"{base}_fixed{ext}")
-
-        if os.path.abspath(strip_path) != os.path.abspath(fixed_path):
-            shutil.copy2(strip_path, fixed_path)
-
-        if not os.path.exists(fixed_path):
-            raise RuntimeError(f"Failed to save fixed seed strip: {fixed_path}")
-
-        return fixed_path, strip_info[strip_path]["icp_ready_path"]
-
-    # ------------------------------------------------------------------
     # Helper to score overlap between source and accepted reference
     # ------------------------------------------------------------------
     def compute_pair_overlap(source_path, ref_output_path, ref_icp_ready_path):
@@ -551,7 +611,8 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     unresolved = [s for s in valid_ordered if s != initial_seed]
 
     try:
-        fixed_seed, fixed_seed_icp = make_fixed_copy(initial_seed)
+        fixed_seed = save_fixed_seed_strip(initial_seed, aligned_dir)
+        fixed_seed_icp = strip_info[initial_seed]["icp_ready_path"]
     except Exception as e:
         print(f"[ICP] Failed to initialize seed: {e}")
         shutil.rmtree(temp_icp_dir, ignore_errors=True)
@@ -783,7 +844,8 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             unresolved.remove(new_seed)
 
             try:
-                fixed_seed, fixed_seed_icp = make_fixed_copy(new_seed)
+                fixed_seed = save_fixed_seed_strip(new_seed, aligned_dir)
+                fixed_seed_icp = strip_info[new_seed]["icp_ready_path"]
             except Exception as e:
                 print(f"[ICP] Failed to start new cluster seed for {os.path.basename(new_seed)}: {e}")
                 fallback_outputs.append(new_seed)
@@ -811,13 +873,17 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         if not members:
             continue
 
-        cluster_output_file = os.path.join(
-            cluster_dir,
-            f"{aoi_name}_cluster_{cid}.laz"
-        )
+        first_member = members[0]
+        source_strip_for_year = accepted_source_origin.get(first_member, first_member)
 
         try:
-            merge_aligned_strips(members, cluster_output_file)
+            cluster_output_file = save_cluster_laz(
+                cluster_members=members,
+                cluster_dir=cluster_dir,
+                target_fp=target_fp,
+                cluster_id=cid,
+                source_strip_for_year=source_strip_for_year,
+            )
             cluster_output_files[cid] = cluster_output_file
             print(f"[ICP] Saved cluster {cid}: {cluster_output_file}")
         except Exception as e:
@@ -839,9 +905,6 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         for m in members:
             print(f"    - {os.path.basename(m)}")
 
-    # ------------------------------------------------------------------
-    # Logging summary
-    # ------------------------------------------------------------------
     summary = {
         "stage": "overlap_based_icp_summary",
         "accepted_outputs": [os.path.basename(x) for x in accepted_outputs],
@@ -865,38 +928,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
 
     return {
         "accepted_outputs": accepted_outputs,
-        "fallback_outputs": fallback_outputs, #+ crossing_strips,
-        #"discarded_outputs": discarded_outputs,
+        "fallback_outputs": fallback_outputs,
         "clusters": dict(cluster_members),
         "cluster_output_files": cluster_output_files,
     }
-
-
-def merge_aligned_strips(strip_files, output_file):
-    """
-    Merge a list of LAS/LAZ strips into a single LAS/LAZ output using PDAL.
-    """
-    if not strip_files:
-        return None
-
-    for f in strip_files:
-        if not os.path.exists(f):
-            raise FileNotFoundError(f"Input strip does not exist: {f}")
-
-    pipeline = {"pipeline": []}
-
-    for f in strip_files:
-        pipeline["pipeline"].append({
-            "type": "readers.las",
-            "filename": f
-        })
-
-    pipeline["pipeline"].append({"type": "filters.merge"})
-    pipeline["pipeline"].append({
-        "type": "writers.las",
-        "filename": output_file,
-        "compression": "laszip"
-    })
-
-    pdal.Pipeline(json.dumps(pipeline)).execute()
-    return output_file
