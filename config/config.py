@@ -125,6 +125,9 @@ class Configuration:
         self.xdem_ground_only = True  # keep only class 2 points when classification is available
         self.xdem_write_diagnostics = True  # write before/after dDEM statistics CSV
 
+        # global idempotency switch
+        self.overwrite_outputs = False  # if True, recompute outputs even when valid files already exist
+
         # ------ VALIDATION ------
 
         self.data_type = 'raster'   # Type of validation data, can be 'raster' or 'vector' (points)

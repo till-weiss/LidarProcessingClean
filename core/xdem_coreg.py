@@ -3,6 +3,7 @@ import glob
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import laspy
 import numpy as np
@@ -11,6 +12,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
+from core.utils import output_exists, outputs_exist
 
 
 @dataclass
@@ -271,22 +273,47 @@ def run_xdem_coreg_workflow(config) -> dict[str, str]:
     template_grid = build_template_grid(las_files, resolution=float(getattr(config, "xdem_resolution", 1.0)))
 
     dem_paths = []
+    overwrite_outputs = bool(getattr(config, "overwrite_outputs", False))
     for idx, las_path in enumerate(las_files):
         strip_id = os.path.splitext(os.path.basename(las_path))[0]
         dem_path = os.path.join(dem_dir, f"dem_strip_{idx:03d}_{strip_id}.tif")
-        rasterise_strip_to_dem(
-            las_path=las_path,
-            template_grid=template_grid,
-            output_path=dem_path,
-            nodata=float(getattr(config, "xdem_nodata", -9999.0)),
-            use_ground_only=bool(getattr(config, "xdem_ground_only", True)),
-        )
+        if output_exists(Path(dem_path), min_size_mb=1.0) and not overwrite_outputs:
+            print(f"Skipping strip rasterisation: valid DEM exists -> {dem_path}")
+        else:
+            rasterise_strip_to_dem(
+                las_path=las_path,
+                template_grid=template_grid,
+                output_path=dem_path,
+                nodata=float(getattr(config, "xdem_nodata", -9999.0)),
+                use_ground_only=bool(getattr(config, "xdem_ground_only", True)),
+            )
         dem_paths.append(dem_path)
+
+    expected_aligned = [
+        os.path.join(output_dir, "aligned", f"{Path(p).stem}_aligned.tif")
+        for p in dem_paths[1:]
+    ]
+    params_json = os.path.join(output_dir, "coregistration_parameters.json")
+    stats_csv = os.path.join(output_dir, "coregistration_stats.csv")
+    write_stats = bool(getattr(config, "xdem_write_diagnostics", True))
+
+    coreg_outputs_ready = (
+        outputs_exist(expected_aligned, min_size_mb=1.0)
+        and output_exists(Path(params_json), min_size_mb=0.001)
+        and ((not write_stats) or output_exists(Path(stats_csv), min_size_mb=0.001))
+    )
+    if coreg_outputs_ready and not overwrite_outputs:
+        print("Skipping xDEM coregistration: aligned DEMs and metadata already exist.")
+        return {
+            "parameters_json": params_json,
+            "stats_csv": stats_csv if write_stats else "",
+            "aligned_dir": os.path.join(output_dir, "aligned"),
+        }
 
     return coregister_dems(
         dem_paths=dem_paths,
         output_dir=output_dir,
-        write_diagnostics=bool(getattr(config, "xdem_write_diagnostics", True)),
+        write_diagnostics=write_stats,
     )
 
 

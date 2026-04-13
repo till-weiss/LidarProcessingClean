@@ -2,6 +2,7 @@ import os
 import time
 import json
 import glob
+from pathlib import Path
 import pdal
 import laspy
 import numpy as np
@@ -23,6 +24,7 @@ from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.processing_windowed import create_chunks_from_wkt, process_chunk_to_dsm, process_chunk_to_dem ,merge_chunks
 from core.xdem_coreg import run_xdem_coreg_workflow
+from core.utils import output_exists
 
 
 def check_resolution(las_file, resolution, method="sampling", num_samples=10000):
@@ -87,7 +89,7 @@ def process_dsm_chunk_wrapper(args):
     except Exception as e:
         return print(f"Error processing chunk for {las_file}: {e}")
 
-def generate_dsm(input_folder, output_folder, run_name, method, resolution, chunk_size, chunk_overlap, num_workers, fill_gaps=True):
+def generate_dsm(input_folder, output_folder, run_name, method, resolution, chunk_size, chunk_overlap, num_workers, fill_gaps=True, overwrite_outputs=False):
 
     final_output_folder = os.path.join(output_folder, run_name, 'DSM')
     os.makedirs(final_output_folder, exist_ok=True)
@@ -117,7 +119,7 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
         temp_dsm_dir = os.path.join(temp_folder, base_name)
         final_dsm_path = os.path.join(final_output_folder, f"{base_name}_DSM.tif")
 
-        if not os.path.exists(final_dsm_path):
+        if not output_exists(Path(final_dsm_path), min_size_mb=1.0) or overwrite_outputs:
 
             print(f'saving temp files to {temp_dsm_dir}')
 
@@ -167,7 +169,7 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
             shutil.rmtree(temp_dsm_dir, ignore_errors=True)
 
         else:
-            print(f"Skipping {base_name}: File already exists.")
+            print(f"Skipping DSM for {base_name}: valid output exists -> {final_dsm_path}")
 
     elapsed_time = timedelta(seconds=int(time.time() - start_time))
     print(f"\nDSM generation completed in {elapsed_time}.")
@@ -179,7 +181,7 @@ def process_dtm_chunk_wrapper(args):
      time_step, cloth_resolution, fill_gaps, filter_smrf, filter_csf) = args
     return process_chunk_to_dem(input_file=las_file, large_chunk_bbox=large_chunk, small_chunk_bbox=small_chunk, temp_dir=output_dir, scalar=scalar, threshold=threshold, slope=slope, window=window, rigidness=rigidness, iterations=iterations, resolution=resolution, time_step=time_step, cloth_resolution=cloth_resolution, fill_gaps=fill_gaps, filter_smrf=filter_smrf, filter_csf=filter_csf)
 
-def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, fill_gaps, num_workers, method, chunk_overlap, threshold, scalar, slope, window, rigidness, iterations, time_step, cloth_resolution, filter_smrf, filter_csf):
+def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, fill_gaps, num_workers, method, chunk_overlap, threshold, scalar, slope, window, rigidness, iterations, time_step, cloth_resolution, filter_smrf, filter_csf, overwrite_outputs=False):
     
     final_output_folder = os.path.join(output_folder, run_name, 'DTM')
     os.makedirs(final_output_folder, exist_ok=True)
@@ -207,7 +209,7 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
         temp_dtm_dir = os.path.join(temp_folder, base_name)
         final_dtm_path = os.path.join(final_output_folder, f"{base_name}_DTM.tif")
 
-        if not os.path.exists(final_dtm_path):
+        if not output_exists(Path(final_dtm_path), min_size_mb=1.0) or overwrite_outputs:
 
             target_wkt = get_las_footprint_wkt(las_file)
             avg_spacing, is_resolution_ok = check_resolution(las_file, resolution, method)
@@ -277,7 +279,7 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
             shutil.rmtree(temp_dtm_dir, ignore_errors=True)
             
         else:
-            print(f"Skipping {base_name}: DTM already exists.")
+            print(f"Skipping DEM for {base_name}: valid output exists -> {final_dtm_path}")
         
         
     
@@ -392,7 +394,8 @@ def process_all(config):
             fill_gaps=config.fill_gaps,
             num_workers=config.num_workers, 
             method=config.point_density_method,
-            chunk_overlap=config.chunk_overlap
+            chunk_overlap=config.chunk_overlap,
+            overwrite_outputs=getattr(config, "overwrite_outputs", False),
         )
 
     if config.create_DEM:
@@ -416,7 +419,8 @@ def process_all(config):
             chunk_overlap=config.chunk_overlap,
             filter_smrf=config.smrf_filter,
             filter_csf=config.csf_filter,
-            threshold=config.threshold
+            threshold=config.threshold,
+            overwrite_outputs=getattr(config, "overwrite_outputs", False),
         )
 
     if config.create_CHM:

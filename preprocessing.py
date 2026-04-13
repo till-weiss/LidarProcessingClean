@@ -2,6 +2,7 @@ import os
 import time
 import json
 import shutil
+from pathlib import Path
 from datetime import timedelta
 from datetime import datetime
 from multiprocessing import Pool
@@ -18,7 +19,7 @@ from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, process_strip, merge_and_crop_strips
 from core.extract_footprints import extract_footprint_batch
-from core.utils import split_gpkg
+from core.utils import split_gpkg, output_exists
 import config.config as config
 from core.icp import align_strips_incremental_icp
 
@@ -180,8 +181,8 @@ def merge_and_clean_las(
         clean_target_fp = os.path.splitext(target_fp)[0]
         final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
 
-        if os.path.exists(final_output_file):
-            print(f"Skipping {target_fp}: Already processed.")
+        if output_exists(Path(final_output_file), min_size_mb=1.0) and not config.overwrite_outputs:
+            print(f"Skipping merge/clean for {target_fp}: valid output exists -> {final_output_file}")
             continue
 
         footprint_path = os.path.join(
@@ -272,23 +273,29 @@ def merge_and_clean_las(
                     merged_aligned_file = os.path.join(
                         run_merged_dir, f"{target_fp}_aligned_merged.laz"
                     )
-                    merge_and_crop_strips(
-                        accepted_outputs,
-                        target_geom_wkt,
-                        merged_aligned_file
-                    )
+                    if output_exists(Path(merged_aligned_file), min_size_mb=1.0) and not config.overwrite_outputs:
+                        print(f"Skipping aligned strip merge for {target_fp}: {merged_aligned_file} exists")
+                    else:
+                        merge_and_crop_strips(
+                            accepted_outputs,
+                            target_geom_wkt,
+                            merged_aligned_file
+                        )
                 else:
                     print(f"No accepted ICP strips available for {target_fp}.")
 
                 all_outputs = accepted_outputs + fallback_outputs
                 if all_outputs:
                     final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
-                    merge_and_crop_strips(
-                        all_outputs,
-                        target_geom_wkt,
-                        final_output_file
-                    )
-                    print(f"Final processed LAS file saved: {final_output_file}")
+                    if output_exists(Path(final_output_file), min_size_mb=1.0) and not config.overwrite_outputs:
+                        print(f"Skipping final strip merge for {target_fp}: {final_output_file} exists")
+                    else:
+                        merge_and_crop_strips(
+                            all_outputs,
+                            target_geom_wkt,
+                            final_output_file
+                        )
+                        print(f"Final processed LAS file saved: {final_output_file}")
                 else:
                     print(f"No processed strips available for {target_fp}.")
 
@@ -349,8 +356,11 @@ def merge_and_clean_las(
                     pbar.update(1)
 
         if processed_chunks:
-            merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
-            print(f"Final processed LAS file saved: {final_output_file}")
+            if output_exists(Path(final_output_file), min_size_mb=1.0) and not config.overwrite_outputs:
+                print(f"Skipping chunk merge for {target_fp}: {final_output_file} exists")
+            else:
+                merge_and_crop_chunks(processed_chunks, target_geom_wkt, final_output_file)
+                print(f"Final processed LAS file saved: {final_output_file}")
         else:
             print(f"No processed chunks available for {target_fp}.")
 
