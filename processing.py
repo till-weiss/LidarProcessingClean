@@ -22,6 +22,7 @@ import multiprocessing
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.processing_windowed import create_chunks_from_wkt, process_chunk_to_dsm, process_chunk_to_dem ,merge_chunks
+from core.dem_coregistration import main as run_icp_ready_dem_coreg
 
 
 def check_resolution(las_file, resolution, method="sampling", num_samples=10000):
@@ -421,6 +422,17 @@ def process_all(config):
             input_folder=config.results_dir,
             output_folder=config.results_dir,
             run_name=config.run_name
+        )
+
+
+    if config.enable_icp_ready_dem_coreg:
+        print("\n========== Starting ICP-ready DEM rasterization + xDEM coregistration ==========")
+        run_icp_ready_dem_coreg(
+            input_dir=config.icp_ready_input_dir,
+            output_dir=config.icp_ready_output_dir,
+            resolution=config.icp_ready_resolution,
+            nodata=config.icp_ready_nodata,
+            save_diagnostics=config.icp_ready_save_diagnostics,
         )
 
     elapsed_time = timedelta(seconds=int(time.time() - start_time))

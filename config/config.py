@@ -69,6 +69,15 @@ class Configuration:
         self.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
         self.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
 
+
+        # ------ ICP-READY DEM COREGISTRATION ------
+        self.enable_icp_ready_dem_coreg = False
+        self.icp_ready_input_dir = os.path.join(self.preprocessed_dir, self.run_name)
+        self.icp_ready_output_dir = os.path.join(self.results_dir, self.run_name, 'DEM_COREG')
+        self.icp_ready_resolution = 1.0
+        self.icp_ready_nodata = -9999.0
+        self.icp_ready_save_diagnostics = True
+
         # ------ VALIDATION ------
 
         self.data_type = 'raster'   # Type of validation data, can be 'raster' or 'vector' (points)
@@ -110,7 +119,7 @@ class Configuration:
                 raise ConfigError(f"Invalid path: {path_attr} = {path}")
 
         # Create required output directories if they don't exist
-        for path_attr in ["results_dir", "preprocessed_dir"]:
+        for path_attr in ["results_dir", "preprocessed_dir", "icp_ready_output_dir"]:
             path = getattr(self, path_attr)
             try:
                 os.makedirs(path, exist_ok=True)
