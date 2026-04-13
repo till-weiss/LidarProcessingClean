@@ -115,6 +115,16 @@ class Configuration:
         self.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
         self.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
 
+        # ------ xDEM DEM co-registration ------
+        self.enable_xdem_coreg = False  # run strip-wise DEM rasterisation + xDEM NuthKaab coregistration
+        self.xdem_input_dir = ''  # optional override for ICP-ready strip directory
+        self.xdem_output_dir = ''  # optional override for xDEM output directory
+        self.xdem_filename_token = 'icp_ready'  # only files containing this token are used
+        self.xdem_resolution = 1.0  # shared DEM grid resolution (m)
+        self.xdem_nodata = -9999.0  # nodata value used during rasterisation/coregistration
+        self.xdem_ground_only = True  # keep only class 2 points when classification is available
+        self.xdem_write_diagnostics = True  # write before/after dDEM statistics CSV
+
         # ------ VALIDATION ------
 
         self.data_type = 'raster'   # Type of validation data, can be 'raster' or 'vector' (points)

@@ -22,6 +22,7 @@ import multiprocessing
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.processing_windowed import create_chunks_from_wkt, process_chunk_to_dsm, process_chunk_to_dem ,merge_chunks
+from core.xdem_coreg import run_xdem_coreg_workflow
 
 
 def check_resolution(las_file, resolution, method="sampling", num_samples=10000):
@@ -425,6 +426,10 @@ def process_all(config):
             output_folder=config.results_dir,
             run_name=config.run_name
         )
+
+    if config.enable_xdem_coreg:
+        print("\n========== Starting xDEM Coregistration ==========")
+        run_xdem_coreg_workflow(config)
 
     elapsed_time = timedelta(seconds=int(time.time() - start_time))
     print(f"\n DEM generation completed in {elapsed_time}.\n")
