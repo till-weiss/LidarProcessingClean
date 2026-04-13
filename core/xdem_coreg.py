@@ -2,8 +2,9 @@ import csv
 import glob
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import laspy
 import numpy as np
@@ -12,7 +13,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
-from core.utils import output_exists, outputs_exist
+from core.utils import output_exists
 
 
 @dataclass
@@ -26,6 +27,60 @@ class TemplateGrid:
     height: int
     crs: CRS
     transform: object
+
+
+# Central step switches for checkpointed strip workflow.
+CONFIG = {
+    "merge": False,
+    "filter": False,
+    "crop": False,
+    "rasterise": True,
+    "coreg_xdem": True,
+    "overwrite": False,
+}
+
+
+@dataclass
+class PipelineStep:
+    name: str
+    func: Callable
+    outputs: list[Path]
+    output_dir: Path
+    enabled: bool = True
+    dependencies: list[str] = field(default_factory=list)
+
+
+def step_done_flag(step: PipelineStep) -> Path:
+    return step.output_dir / f"{step.name}.done"
+
+
+def outputs_exist(outputs: list[Path]) -> bool:
+    return all(path.exists() for path in outputs)
+
+
+def is_step_complete(step: PipelineStep) -> bool:
+    return step_done_flag(step).exists() and outputs_exist(step.outputs)
+
+
+def run_step(step: PipelineStep, completed_steps: set[str], overwrite: bool = False) -> None:
+    if not step.enabled:
+        print(f"[SKIP] {step.name} (disabled)")
+        return
+
+    for dependency in step.dependencies:
+        if dependency not in completed_steps:
+            raise RuntimeError(f"{step.name} requires {dependency}")
+
+    if is_step_complete(step) and not overwrite:
+        print(f"[SKIP] {step.name} (already done)")
+        completed_steps.add(step.name)
+        return
+
+    print(f"[RUN] {step.name}")
+    step.output_dir.mkdir(parents=True, exist_ok=True)
+    step.func()
+    step_done_flag(step).touch()
+    completed_steps.add(step.name)
 
 
 def find_icp_ready_files(input_dir: str, filename_token: str = "icp_ready") -> list[str]:
@@ -260,61 +315,77 @@ def coregister_dems(dem_paths: list[str], output_dir: str, write_diagnostics: bo
 
 
 def run_xdem_coreg_workflow(config) -> dict[str, str]:
-    """Main workflow: find strips -> DEM rasterisation -> xDEM coregistration."""
-    input_dir = getattr(config, "xdem_input_dir", "") or os.path.join(config.preprocessed_dir, config.run_name, "icp_ready")
-    output_dir = getattr(config, "xdem_output_dir", "") or os.path.join(config.results_dir, config.run_name, "xdem_coreg")
-    dem_dir = os.path.join(output_dir, "dems")
-    os.makedirs(dem_dir, exist_ok=True)
+    """Checkpointed strip workflow: rasterise DEMs, then xDEM coregister."""
+    input_dir = Path(getattr(config, "xdem_input_dir", "") or os.path.join(config.preprocessed_dir, config.run_name, "icp_ready"))
+    output_dir = Path(getattr(config, "xdem_output_dir", "") or os.path.join(config.results_dir, config.run_name, "xdem_coreg"))
+    dem_dir = output_dir / "dems"
+    aligned_dir = output_dir / "aligned"
+    dem_dir.mkdir(parents=True, exist_ok=True)
 
-    las_files = find_icp_ready_files(input_dir, filename_token=getattr(config, "xdem_filename_token", "icp_ready"))
+    las_files = find_icp_ready_files(str(input_dir), filename_token=getattr(config, "xdem_filename_token", "icp_ready"))
     if not las_files:
         raise ValueError(f"No ICP-ready LAS/LAZ files found in: {input_dir}")
 
     template_grid = build_template_grid(las_files, resolution=float(getattr(config, "xdem_resolution", 1.0)))
 
-    dem_paths = []
-    overwrite_outputs = bool(getattr(config, "overwrite_outputs", False))
+    dem_paths: list[Path] = []
     for idx, las_path in enumerate(las_files):
-        strip_id = os.path.splitext(os.path.basename(las_path))[0]
-        dem_path = os.path.join(dem_dir, f"dem_strip_{idx:03d}_{strip_id}.tif")
-        if output_exists(Path(dem_path), min_size_mb=1.0) and not overwrite_outputs:
-            print(f"Skipping strip rasterisation: valid DEM exists -> {dem_path}")
-        else:
+        strip_id = Path(las_path).stem
+        dem_paths.append(dem_dir / f"dem_strip_{idx:03d}_{strip_id}.tif")
+
+    def rasterise_all_strips() -> None:
+        for las_path, dem_path in zip(las_files, dem_paths):
+            if output_exists(dem_path, min_size_mb=1.0) and not bool(getattr(config, "overwrite_outputs", False)):
+                print(f"[SKIP] rasterise output exists -> {dem_path}")
+                continue
             rasterise_strip_to_dem(
                 las_path=las_path,
                 template_grid=template_grid,
-                output_path=dem_path,
+                output_path=str(dem_path),
                 nodata=float(getattr(config, "xdem_nodata", -9999.0)),
                 use_ground_only=bool(getattr(config, "xdem_ground_only", True)),
             )
-        dem_paths.append(dem_path)
 
-    expected_aligned = [
-        os.path.join(output_dir, "aligned", f"{Path(p).stem}_aligned.tif")
-        for p in dem_paths[1:]
+    aligned_outputs = [aligned_dir / f"{dem_path.stem}_aligned.tif" for dem_path in dem_paths[1:]]
+
+    def run_xdem_coregistration() -> None:
+        coregister_dems(
+            dem_paths=[str(path) for path in dem_paths],
+            output_dir=str(output_dir),
+            write_diagnostics=bool(getattr(config, "xdem_write_diagnostics", True)),
+        )
+
+    steps = [
+        PipelineStep(
+            name="rasterise",
+            func=rasterise_all_strips,
+            outputs=dem_paths,
+            output_dir=dem_dir,
+            enabled=bool(getattr(config, "xdem_enable_rasterise", CONFIG["rasterise"])),
+            dependencies=[],
+        ),
+        PipelineStep(
+            name="coreg_xdem",
+            func=run_xdem_coregistration,
+            outputs=aligned_outputs,
+            output_dir=output_dir,
+            enabled=bool(getattr(config, "enable_xdem_coreg", CONFIG["coreg_xdem"])),
+            dependencies=["rasterise"],
+        ),
     ]
-    params_json = os.path.join(output_dir, "coregistration_parameters.json")
-    stats_csv = os.path.join(output_dir, "coregistration_stats.csv")
-    write_stats = bool(getattr(config, "xdem_write_diagnostics", True))
 
-    coreg_outputs_ready = (
-        outputs_exist(expected_aligned, min_size_mb=1.0)
-        and output_exists(Path(params_json), min_size_mb=0.001)
-        and ((not write_stats) or output_exists(Path(stats_csv), min_size_mb=0.001))
-    )
-    if coreg_outputs_ready and not overwrite_outputs:
-        print("Skipping xDEM coregistration: aligned DEMs and metadata already exist.")
-        return {
-            "parameters_json": params_json,
-            "stats_csv": stats_csv if write_stats else "",
-            "aligned_dir": os.path.join(output_dir, "aligned"),
-        }
+    overwrite = bool(getattr(config, "overwrite_outputs", CONFIG["overwrite"]))
+    completed_steps: set[str] = set()
+    for step in steps:
+        run_step(step, completed_steps=completed_steps, overwrite=overwrite)
 
-    return coregister_dems(
-        dem_paths=dem_paths,
-        output_dir=output_dir,
-        write_diagnostics=write_stats,
-    )
+    params_json = output_dir / "coregistration_parameters.json"
+    stats_csv = output_dir / "coregistration_stats.csv"
+    return {
+        "parameters_json": str(params_json),
+        "stats_csv": str(stats_csv) if stats_csv.exists() else "",
+        "aligned_dir": str(aligned_dir),
+    }
 
 
 def main() -> None:
