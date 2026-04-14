@@ -124,6 +124,8 @@ class Configuration:
         self.xdem_nodata = -9999.0  # nodata value used during rasterisation/coregistration
         self.xdem_ground_only = True  # keep only class 2 points when classification is available
         self.xdem_write_diagnostics = True  # write before/after dDEM statistics CSV
+        self.xdem_coreg_products = ["DTM"]  # supported: ["DTM"], ["DSM"], or ["DTM", "DSM"]
+        self.xdem_merge_aoi = True  # merge per-strip aligned products into one AOI raster per selected product
 
         # global idempotency switch
         self.overwrite_outputs = False  # if True, recompute outputs even when valid files already exist

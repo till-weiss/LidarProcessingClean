@@ -10,6 +10,7 @@ import laspy
 import numpy as np
 import pdal
 import rasterio
+from rasterio.merge import merge as rio_merge
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
@@ -365,16 +366,53 @@ def coregister_dems(dem_paths: list[str], output_dir: str, write_diagnostics: bo
             writer.writeheader()
             writer.writerows(stats_rows)
 
-    return {"parameters_json": params_json, "stats_csv": stats_csv, "aligned_dir": aligned_dir}
+    return {
+        "parameters_json": params_json,
+        "stats_csv": stats_csv,
+        "aligned_dir": aligned_dir,
+        "aligned_files": sorted(
+            [
+                os.path.join(aligned_dir, f)
+                for f in os.listdir(aligned_dir)
+                if f.lower().endswith(".tif")
+            ]
+        ),
+    }
+
+
+def merge_product_rasters(raster_paths: list[Path], output_path: Path, nodata: float = -9999.0) -> str:
+    """Merge strip-level rasters into one AOI raster."""
+    valid_paths = [Path(p) for p in raster_paths if Path(p).exists()]
+    if not valid_paths:
+        raise ValueError("No rasters available for AOI merge.")
+
+    srcs = [rasterio.open(path) for path in valid_paths]
+    try:
+        mosaic, transform = rio_merge(srcs)
+        profile = srcs[0].profile.copy()
+        profile.update(
+            driver="GTiff",
+            height=mosaic.shape[1],
+            width=mosaic.shape[2],
+            transform=transform,
+            nodata=nodata,
+            compress="lzw",
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(output_path, "w", **profile) as dst:
+            dst.write(mosaic)
+    finally:
+        for src in srcs:
+            src.close()
+
+    return str(output_path)
 
 
 def run_xdem_coreg_workflow(config) -> dict[str, str]:
-    """Checkpointed strip workflow: rasterise DEMs, then xDEM coregister."""
+    """Checkpointed strip workflow: rasterise, coregister, and merge AOI products."""
     input_dir = Path(getattr(config, "xdem_input_dir", "") or os.path.join(config.preprocessed_dir, config.run_name, "icp_ready"))
-    output_dir = Path(getattr(config, "xdem_output_dir", "") or os.path.join(config.results_dir, config.run_name, "xdem_coreg"))
-    dem_dir = output_dir / "dems"
-    aligned_dir = output_dir / "aligned"
-    dem_dir.mkdir(parents=True, exist_ok=True)
+    base_output_dir = Path(getattr(config, "xdem_output_dir", "") or os.path.join(config.results_dir, config.run_name, "xdem_coreg"))
+    base_output_dir.mkdir(parents=True, exist_ok=True)
 
     las_files = find_icp_ready_files(str(input_dir), filename_token=getattr(config, "xdem_filename_token", "icp_ready"))
     if not las_files:
@@ -382,64 +420,112 @@ def run_xdem_coreg_workflow(config) -> dict[str, str]:
 
     template_grid = build_template_grid(las_files, resolution=float(getattr(config, "xdem_resolution", 1.0)))
 
-    dem_paths: list[Path] = []
-    for idx, las_path in enumerate(las_files):
-        strip_id = Path(las_path).stem
-        dem_paths.append(dem_dir / f"dem_strip_{idx:03d}_{strip_id}.tif")
-
-    def rasterise_all_strips() -> None:
-        for las_path, dem_path in zip(las_files, dem_paths):
-            if output_exists(dem_path, min_size_mb=1.0) and not bool(getattr(config, "overwrite_outputs", False)):
-                print(f"[SKIP] rasterise output exists -> {dem_path}")
-                continue
-            rasterise_strip_to_dem(
-                las_path=las_path,
-                template_grid=template_grid,
-                output_path=str(dem_path),
-                nodata=float(getattr(config, "xdem_nodata", -9999.0)),
-                use_ground_only=bool(getattr(config, "xdem_ground_only", True)),
-            )
-
-    aligned_outputs = [aligned_dir / f"{dem_path.stem}_aligned.tif" for dem_path in dem_paths[1:]]
-
-    def run_xdem_coregistration() -> None:
-        coregister_dems(
-            dem_paths=[str(path) for path in dem_paths],
-            output_dir=str(output_dir),
-            write_diagnostics=bool(getattr(config, "xdem_write_diagnostics", True)),
-        )
-
-    steps = [
-        PipelineStep(
-            name="rasterise",
-            func=rasterise_all_strips,
-            outputs=dem_paths,
-            output_dir=dem_dir,
-            enabled=bool(getattr(config, "xdem_enable_rasterise", CONFIG["rasterise"])),
-            dependencies=[],
-        ),
-        PipelineStep(
-            name="coreg_xdem",
-            func=run_xdem_coregistration,
-            outputs=aligned_outputs,
-            output_dir=output_dir,
-            enabled=bool(getattr(config, "enable_xdem_coreg", CONFIG["coreg_xdem"])),
-            dependencies=["rasterise"],
-        ),
-    ]
+    raw_products = getattr(config, "xdem_coreg_products", ["DTM"])
+    if isinstance(raw_products, str):
+        raw_products = [raw_products]
+    products = [str(p).upper() for p in raw_products]
+    if "BOTH" in products:
+        products = ["DTM", "DSM"]
+    products = [p for p in products if p in {"DTM", "DSM"}]
+    if not products:
+        products = ["DTM"]
 
     overwrite = bool(getattr(config, "overwrite_outputs", CONFIG["overwrite"]))
-    completed_steps: set[str] = set()
-    for step in steps:
-        run_step(step, completed_steps=completed_steps, overwrite=overwrite)
+    write_diag = bool(getattr(config, "xdem_write_diagnostics", True))
+    merge_aoi = bool(getattr(config, "xdem_merge_aoi", True))
+    results: dict[str, dict[str, str]] = {}
 
-    params_json = output_dir / "coregistration_parameters.json"
-    stats_csv = output_dir / "coregistration_stats.csv"
-    return {
-        "parameters_json": str(params_json),
-        "stats_csv": str(stats_csv) if stats_csv.exists() else "",
-        "aligned_dir": str(aligned_dir),
-    }
+    for product in products:
+        product_out = base_output_dir / product.lower()
+        dem_dir = product_out / "dems"
+        aligned_dir = product_out / "aligned"
+        dem_dir.mkdir(parents=True, exist_ok=True)
+
+        use_ground_only = bool(getattr(config, "xdem_ground_only", True)) if product == "DTM" else False
+
+        dem_paths: list[Path] = []
+        for idx, las_path in enumerate(las_files):
+            strip_id = Path(las_path).stem
+            dem_paths.append(dem_dir / f"{product.lower()}_strip_{idx:03d}_{strip_id}.tif")
+
+        def rasterise_all_strips() -> None:
+            for las_path, dem_path in zip(las_files, dem_paths):
+                if output_exists(dem_path, min_size_mb=1.0) and not overwrite:
+                    print(f"[SKIP] rasterise_{product.lower()} output exists -> {dem_path}")
+                    continue
+                rasterise_strip_to_dem(
+                    las_path=las_path,
+                    template_grid=template_grid,
+                    output_path=str(dem_path),
+                    nodata=float(getattr(config, "xdem_nodata", -9999.0)),
+                    use_ground_only=use_ground_only,
+                )
+
+        aligned_outputs = [aligned_dir / f"{dem_path.stem}_aligned.tif" for dem_path in dem_paths[1:]]
+        reference_dem = dem_paths[0]
+        coreg_result: dict[str, str | list[str]] = {}
+
+        def run_xdem_coregistration() -> None:
+            nonlocal coreg_result
+            coreg_result = coregister_dems(
+                dem_paths=[str(path) for path in dem_paths],
+                output_dir=str(product_out),
+                write_diagnostics=write_diag,
+            )
+
+        merged_aoi_path = product_out / f"{product.lower()}_aoi_merged.tif"
+
+        def merge_aoi_raster() -> None:
+            aligned_files = [Path(p) for p in coreg_result.get("aligned_files", [])]
+            merge_inputs = [reference_dem] + aligned_files
+            merge_product_rasters(
+                raster_paths=merge_inputs,
+                output_path=merged_aoi_path,
+                nodata=float(getattr(config, "xdem_nodata", -9999.0)),
+            )
+
+        steps = [
+            PipelineStep(
+                name=f"rasterise_{product.lower()}",
+                func=rasterise_all_strips,
+                outputs=dem_paths,
+                output_dir=dem_dir,
+                enabled=True,
+                dependencies=[],
+            ),
+            PipelineStep(
+                name=f"coreg_xdem_{product.lower()}",
+                func=run_xdem_coregistration,
+                outputs=aligned_outputs,
+                output_dir=product_out,
+                enabled=bool(getattr(config, "enable_xdem_coreg", CONFIG["coreg_xdem"])),
+                dependencies=[f"rasterise_{product.lower()}"],
+            ),
+            PipelineStep(
+                name=f"merge_aoi_{product.lower()}",
+                func=merge_aoi_raster,
+                outputs=[merged_aoi_path],
+                output_dir=product_out,
+                enabled=merge_aoi and bool(getattr(config, "enable_xdem_coreg", CONFIG["coreg_xdem"])),
+                dependencies=[f"coreg_xdem_{product.lower()}"],
+            ),
+        ]
+
+        completed_steps: set[str] = set()
+        for step in steps:
+            run_step(step, completed_steps=completed_steps, overwrite=overwrite)
+
+        params_json = product_out / "coregistration_parameters.json"
+        stats_csv = product_out / "coregistration_stats.csv"
+        results[product] = {
+            "parameters_json": str(params_json),
+            "stats_csv": str(stats_csv) if stats_csv.exists() else "",
+            "aligned_dir": str(aligned_dir),
+            "merged_aoi": str(merged_aoi_path) if merged_aoi_path.exists() else "",
+            "reference_dem": str(reference_dem),
+        }
+
+    return results
 
 
 def main() -> None:
