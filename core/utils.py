@@ -1,5 +1,6 @@
 import os
 import shutil
+from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
@@ -13,6 +14,28 @@ from io import BytesIO
 import base64
 
 from core.validation_report import generate_validation_report
+
+
+def output_exists(output_path: Path, min_size_mb: float = 1.0) -> bool:
+    """
+    Returns True if output file exists and is likely valid.
+    - Checks file existence
+    - Optionally checks file size to avoid empty/corrupt outputs
+    """
+    path = Path(output_path)
+    if not path.exists() or not path.is_file():
+        return False
+
+    if min_size_mb <= 0:
+        return True
+
+    file_size_mb = path.stat().st_size / (1024 * 1024)
+    return file_size_mb >= min_size_mb
+
+
+def outputs_exist(output_paths, min_size_mb: float = 1.0) -> bool:
+    """Returns True only if all outputs exist and pass the size sanity check."""
+    return all(output_exists(Path(p), min_size_mb=min_size_mb) for p in output_paths)
 
 
 def cleanup_temp_dir(temp_dir):
