@@ -153,6 +153,7 @@ class Configuration:
 
         # _______ Processing _______
         self.chunk_size = 1000  # chunk size (m). 250–1000 typical. Larger = fewer edges, more memory.
+        self.buffer_size = 30.0  # chunk buffer (m) applied on all sides before processing; outputs are cropped back to core tiles.
         self.chunk_overlap = 0.1  # chunk overlap (fraction). 0.05–0.3. More reduces seam artifacts.
         self.num_workers = 8  # parallel workers. <= physical cores/RAM capacity.
 

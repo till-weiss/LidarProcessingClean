@@ -12,33 +12,50 @@ import subprocess
 from shapely.geometry import box, shape
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
-def create_chunks_from_wkt(input_wkt, chunk_size=1000, overlap=0.2):
+def create_chunks_from_wkt(input_wkt, chunk_size=1000, overlap=0.2, buffer_size=None):
     """
-    create processing chunks based on wkt geometry of target area, with overlap enlarged by x percent, 
-    returns geometries for enlarged chunks and original chunk size, use original chunk size for cliping of results and large for cloth method
+    Create processing chunks from AOI WKT.
+    Returns buffered chunk bounds (for processing context) and core chunk bounds
+    (for final clipping / merge without overlap).
+
+    Parameters
+    ----------
+    input_wkt : str
+        AOI geometry as WKT.
+    chunk_size : float
+        Core chunk edge length in map units.
+    overlap : float
+        Backward-compatible fractional overlap. Used only when buffer_size is None.
+    buffer_size : float | None
+        Buffer distance (map units) added to each chunk on all sides.
     """
 
     geom= wkt_loads(input_wkt)
     min_x, min_y, max_x, max_y = geom.bounds
-    large_chunks = []
-    orig_chunk_size = []
+    buffered_chunks = []
+    core_chunks = []
 
-    enlarged_chunk_size = chunk_size * (1 + overlap)
-    half_extra = (enlarged_chunk_size - chunk_size) / 2
+    if buffer_size is None:
+        # Keep compatibility with existing configs based on fractional overlap.
+        buffer_size = (chunk_size * float(overlap)) / 2.0
+    buffer_size = max(0.0, float(buffer_size))
 
     for x in np.arange(min_x, max_x, chunk_size):
         for y in np.arange(min_y, max_y, chunk_size):
-            large_chunk_bbox = box(x - half_extra, y - half_extra, x + enlarged_chunk_size - half_extra, y + enlarged_chunk_size - half_extra)
-            orig_chunk_box = box(x, y, x + chunk_size, y + chunk_size)
-            if geom.intersects(orig_chunk_box):
-                large_chunks.append(large_chunk_bbox)
-                orig_chunk_size.append(orig_chunk_box)
+            core_chunk_bbox = box(x, y, x + chunk_size, y + chunk_size)
+            if not geom.intersects(core_chunk_bbox):
+                continue
 
-    #check if chunk intersects with original geometry, just take intersecting chunks
-    large_chunks = [chunk for chunk in large_chunks if geom.intersects(chunk)]
-    orig_chunk_size = [chunk for chunk in orig_chunk_size if geom.intersects(chunk)]
-    
-    return large_chunks, orig_chunk_size
+            buffered_chunk_bbox = box(
+                x - buffer_size,
+                y - buffer_size,
+                x + chunk_size + buffer_size,
+                y + chunk_size + buffer_size,
+            )
+            buffered_chunks.append(buffered_chunk_bbox)
+            core_chunks.append(core_chunk_bbox)
+
+    return buffered_chunks, core_chunks
 
 def process_chunk_to_dsm(input_file, large_chunk_bbox, small_chunk_bbox, temp_dir, resolution):
 

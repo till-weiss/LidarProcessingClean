@@ -89,7 +89,7 @@ def process_dsm_chunk_wrapper(args):
     except Exception as e:
         return print(f"Error processing chunk for {las_file}: {e}")
 
-def generate_dsm(input_folder, output_folder, run_name, method, resolution, chunk_size, chunk_overlap, num_workers, fill_gaps=True, overwrite_outputs=False):
+def generate_dsm(input_folder, output_folder, run_name, method, resolution, chunk_size, chunk_overlap, num_workers, fill_gaps=True, overwrite_outputs=False, buffer_size=None):
 
     final_output_folder = os.path.join(output_folder, run_name, 'DSM')
     os.makedirs(final_output_folder, exist_ok=True)
@@ -127,7 +127,12 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
             temp_dsm_dir = os.path.join(temp_folder, base_name)
             os.makedirs(temp_dsm_dir, exist_ok=True)
 
-            large_chunks, small_chunks = create_chunks_from_wkt(target_wkt, chunk_size, chunk_overlap)
+            large_chunks, small_chunks = create_chunks_from_wkt(
+                target_wkt,
+                chunk_size=chunk_size,
+                overlap=chunk_overlap,
+                buffer_size=buffer_size,
+            )
             for large_chunk, small_chunk in zip(large_chunks, small_chunks):
                 chunk_tasks.append((las_file, large_chunk, small_chunk, temp_dsm_dir, resolution))
 
@@ -181,7 +186,7 @@ def process_dtm_chunk_wrapper(args):
      time_step, cloth_resolution, fill_gaps, filter_smrf, filter_csf) = args
     return process_chunk_to_dem(input_file=las_file, large_chunk_bbox=large_chunk, small_chunk_bbox=small_chunk, temp_dir=output_dir, scalar=scalar, threshold=threshold, slope=slope, window=window, rigidness=rigidness, iterations=iterations, resolution=resolution, time_step=time_step, cloth_resolution=cloth_resolution, fill_gaps=fill_gaps, filter_smrf=filter_smrf, filter_csf=filter_csf)
 
-def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, fill_gaps, num_workers, method, chunk_overlap, threshold, scalar, slope, window, rigidness, iterations, time_step, cloth_resolution, filter_smrf, filter_csf, overwrite_outputs=False):
+def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, fill_gaps, num_workers, method, chunk_overlap, threshold, scalar, slope, window, rigidness, iterations, time_step, cloth_resolution, filter_smrf, filter_csf, overwrite_outputs=False, buffer_size=None):
     
     final_output_folder = os.path.join(output_folder, run_name, 'DTM')
     os.makedirs(final_output_folder, exist_ok=True)
@@ -223,7 +228,8 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
             large_chunks, small_chunks = create_chunks_from_wkt(
                 target_wkt,
                 chunk_size=chunk_size,
-                overlap=chunk_overlap
+                overlap=chunk_overlap,
+                buffer_size=buffer_size,
             )
 
             chunk_tasks = []
@@ -396,6 +402,7 @@ def process_all(config):
             method=config.point_density_method,
             chunk_overlap=config.chunk_overlap,
             overwrite_outputs=getattr(config, "overwrite_outputs", False),
+            buffer_size=getattr(config, "buffer_size", 30.0),
         )
 
     if config.create_DEM:
@@ -421,6 +428,7 @@ def process_all(config):
             filter_csf=config.csf_filter,
             threshold=config.threshold,
             overwrite_outputs=getattr(config, "overwrite_outputs", False),
+            buffer_size=getattr(config, "buffer_size", 30.0),
         )
 
     if config.create_CHM:
