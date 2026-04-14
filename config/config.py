@@ -141,13 +141,13 @@ class Configuration:
         # _______ Preprocessing _______
         self.overlap = 0.0  # min overlap (fraction) between pointcloud and AOI. Typical 0.05–0.3.
 
-        self.filter_date = False  # Filter las files by date
+        self.filter_date = True  # Filter las files by date
 
         self.automatic_date_parser = True # get dates from target area only for Region_Site_Date_Res_Order filenames
 
 
-        self.start_date = '2023-07-10'  # Start date for filtering las files
-        self.end_date = '2023-07-10'  # End date for filtering las files
+        self.start_date = '2023-07-27'  # Start date for filtering las files
+        self.end_date = '2023-07-27'  # End date for filtering las files
 
         # _______ Processing _______
         self.chunk_size = 1000  # chunk size (m). 250–1000 typical. Larger = fewer edges, more memory.

@@ -19,18 +19,40 @@ def main() -> None:
     config = configuration.Configuration()
 
     # --- EDIT THESE TO YOUR PATHS ---
-    config.run_name = "Inuvik_2025_3"
+    config.run_name = "Inuvik_test_area"
     config.target_area_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/data/area"
     config.las_files_dir = "/isipd/projects/p_planetdw/data/lidar/02_pointclouds/2025"
     config.las_footprints_dir = "/isipd/projects/p_planetdw/data/lidar/03_las_footprints/2025"
     config.preprocessed_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/preprocessed"
     config.results_dir = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results"
 
+    config.smrf_filter = False  # use SMRF filter 
+    config.csf_filter = True  # use cloth simulation method
+    config.threshold = 0.5  # vertical tolerance (m) for extra clipping. Typical 0.5–2.
 
-    config.overlap = 0.2
+        # CSF (Cloth Simulation)
+    config.csf_rigidness = 1  # cloth stiffness. 1–2 for rugged/steep; 3–4 for very flat urban.
+    config.csf_iterations = 500  # steps. 200–1000. More = better fit, slower.
+    config.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
+    config.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
+
+        # SMRF ground classification
+    config.smrf_window_size = 12.0
+    config.smrf_slope = 0.2
+    config.smrf_scalar = 1.5
+    config.threshold = 0.5
+
+    config.enable_xdem_coreg = True  # run strip-wise DEM rasterisation + xDEM NuthKaab coregistration
+    config.xdem_input_dir = '/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/preprocessed/Inuvik_test_area/inuvik_test/strips'
+    config.xdem_filename_token = '_utm_aoi'
+
+    #config.overlap = 0.2
+
+    config.fill_gaps = False
+    config.chunk_size = 10000
 
     config.create_DSM = True
-    config.create_DEM = True
+    config.create_DEM = False
     config.create_CHM = False
 
     print("\n========== STEP A: Footprint matching (for logging) ==========")
