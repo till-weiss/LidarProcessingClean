@@ -234,6 +234,21 @@ def compute_dem_stats(reference, target) -> dict[str, float]:
     }
 
 
+def _to_json_safe(value):
+    """Convert nested values (incl. callables/numpy) to JSON-serialisable objects."""
+    if isinstance(value, dict):
+        return {str(k): _to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.floating, np.integer)):
+        return value.item()
+    if callable(value):
+        return repr(value)
+    return value
+
+
 def coregister_dems(dem_paths: list[str], output_dir: str, write_diagnostics: bool = True) -> dict[str, str]:
     """Coregister DEMs strip-wise against the first DEM using xDEM Nuth & Kääb."""
     if len(dem_paths) < 2:
@@ -332,14 +347,14 @@ def coregister_dems(dem_paths: list[str], output_dir: str, write_diagnostics: bo
         param_records[target_name] = {
             "coreg_model": "NuthKaab",
             "status": status,
-            "matrix": coreg.to_matrix().tolist() if status == "ok" and hasattr(coreg, "to_matrix") else None,
-            "metadata": coreg.meta if status == "ok" and hasattr(coreg, "meta") else None,
-            "repr": repr(coreg) if status == "ok" else "fit_skipped",
+            "matrix": _to_json_safe(coreg.to_matrix().tolist()) if status == "ok" and hasattr(coreg, "to_matrix") else None,
+            "metadata": _to_json_safe(coreg.meta) if status == "ok" and hasattr(coreg, "meta") else None,
+            "repr": _to_json_safe(repr(coreg)) if status == "ok" else "fit_skipped",
         }
 
     params_json = os.path.join(output_dir, "coregistration_parameters.json")
     with open(params_json, "w", encoding="utf-8") as f:
-        json.dump(param_records, f, indent=2)
+        json.dump(_to_json_safe(param_records), f, indent=2)
 
     stats_csv = ""
     if write_diagnostics and stats_rows:
