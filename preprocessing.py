@@ -165,6 +165,7 @@ def merge_and_clean_las(
     sor_multiplier,
     num_workers,
     chunk_size=1000,
+    buffer_size=0.0,
 ):
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
@@ -315,7 +316,11 @@ def merge_and_clean_las(
                 gdf_local = gdf
 
             target_geom_wkt = wkt_dumps(shape(gdf_local.geometry.iloc[0]))
-            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+            buffered_chunks, core_chunks = create_chunks_from_wkt(
+                target_geom_wkt,
+                chunk_size=chunk_size,
+                buffer_size=buffer_size,
+            )
 
             all_z = laspy.read(strip_input).z
             if max_elev:
@@ -325,11 +330,12 @@ def merge_and_clean_las(
                 max_z = np.max(all_z)
                 min_z = np.min(all_z)
 
-            for chunk in chunks:
+            for buffered_chunk, core_chunk in zip(buffered_chunks, core_chunks):
                 process_args.append(
                     (
                         strip_input,
-                        chunk,
+                        buffered_chunk,
+                        core_chunk,
                         temp_dir,
                         max_z,
                         min_z,
@@ -417,6 +423,7 @@ def preprocess_all(conf):
         num_workers=config.num_workers,
         run_name=run_name,
         chunk_size=config.chunk_size, 
+        buffer_size=config.buffer_size,
         config=config
     )
 

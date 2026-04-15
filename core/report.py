@@ -271,6 +271,7 @@ def _s8(c):
         + _row("end_date",               _val(c.end_date))
         + _group("Chunking / Parallelism")
         + _row("chunk_size",    _val(c.chunk_size,   "m"))
+        + _row("buffer_size",   _val(c.buffer_size,  "m"))
         + _row("chunk_overlap", _val(c.chunk_overlap))
         + _row("num_workers",   _val(c.num_workers))
     )

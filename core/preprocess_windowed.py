@@ -12,24 +12,36 @@ import config.config as config
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 
 
-def create_chunks_from_wkt(target_geom_wkt, chunk_size=100):
-    """Create grid chunks based on the bounding box of the target geometry."""
+def create_chunks_from_wkt(target_geom_wkt, chunk_size=100, buffer_size=0.0):
+    """Create grid chunks and buffered chunk extents from target geometry."""
     target_geom = wkt_loads(target_geom_wkt)
     min_x, min_y, max_x, max_y = target_geom.bounds
-    
-    chunks = []
+
+    buffered_chunks = []
+    core_chunks = []
+    buffer_size = float(max(buffer_size, 0.0))
+
     for x in range(int(min_x), int(max_x), chunk_size):
         for y in range(int(min_y), int(max_y), chunk_size):
-            chunk_bbox = box(x, y, x + chunk_size, y + chunk_size)
-            if target_geom.intersects(chunk_bbox):
-                chunks.append(chunk_bbox)
-    
-    return chunks
+            core_bbox = box(x, y, x + chunk_size, y + chunk_size)
+            if not target_geom.intersects(core_bbox):
+                continue
+            buffered_bbox = box(
+                x - buffer_size,
+                y - buffer_size,
+                x + chunk_size + buffer_size,
+                y + chunk_size + buffer_size,
+            )
+            core_chunks.append(core_bbox)
+            buffered_chunks.append(buffered_bbox)
+
+    return buffered_chunks, core_chunks
 
 
 def process_chunk(
     input_file,
-    chunk_bbox,
+    buffered_chunk_bbox,
+    core_chunk_bbox,
     temp_dir,
     max_z,
     min_z,
@@ -39,12 +51,12 @@ def process_chunk(
     ref_offset=None,
     ref_crs=None,            # horizontal EPSG, e.g. 32632 or 4326
 ):
-    """Process a chunk: convert ellipsoid→EGM2008 orthometric (same horizontal), crop, filter, write."""
+    """Process a chunk on buffered extent, then crop output points back to core extent."""
     # build the chunk filename
     base = os.path.splitext(os.path.basename(input_file))[0]
     chunk_file = os.path.join(
         temp_dir,
-        f"{base}_chunk_{int(chunk_bbox.bounds[0])}_{int(chunk_bbox.bounds[1])}.las"
+        f"{base}_chunk_{int(core_chunk_bbox.bounds[0])}_{int(core_chunk_bbox.bounds[1])}.las"
     )
 
     #find which vertical-ellipsoid code goes with your horizontal CRS
@@ -72,8 +84,8 @@ def process_chunk(
          "out_srs": out_srs
         },
 
-        # crop to this chunk
-        {"type": "filters.crop", "polygon": wkt_dumps(chunk_bbox)},
+        # crop to buffered chunk for neighbourhood-aware processing
+        {"type": "filters.crop", "polygon": wkt_dumps(buffered_chunk_bbox)},
 
         # remove statistical outliers
         {"type": "filters.outlier",
@@ -87,6 +99,9 @@ def process_chunk(
 
         # drop noise class 7
         {"type": "filters.range", "limits": "Classification![7:7]"},
+
+        # crop back to core chunk before writing (removes overlap)
+        {"type": "filters.crop", "polygon": wkt_dumps(core_chunk_bbox)},
 
         # write the chunk, tagging the compound CRS
         {"type": "writers.las",
@@ -225,7 +240,7 @@ def merge_and_crop_strips(strip_files, target_geom_wkt, output_file):
         print(f"Error merging and cropping: {e}")
         return None
 
-def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0):
+def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0, buffer_size=0.0):
     """Process multiple LAS files for different target areas."""
     os.makedirs(preprocessed_dir, exist_ok=True)
     
@@ -235,13 +250,13 @@ def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100,
         
         gdf, input_files = las_files['gdf'], las_files['files']
         target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-        chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+        buffered_chunks, core_chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size, buffer_size=buffer_size)
         
         process_args = []
         for input_file in input_files:
             ref_scale, ref_offset, ref_crs = get_las_header(input_file)
-            for chunk in chunks:
-                process_args.append((input_file, chunk, temp_dir, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
+            for buffered_chunk, core_chunk in zip(buffered_chunks, core_chunks):
+                process_args.append((input_file, buffered_chunk, core_chunk, temp_dir, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
         
         processed_chunks = []
         with tqdm(total=len(process_args), desc=f"Processing {target_area}", unit="chunk") as pbar:

@@ -138,8 +138,12 @@ class Configuration:
 
         # _______ Processing _______
         self.chunk_size = 1000  # chunk size (m). 250–1000 typical. Larger = fewer edges, more memory.
+        self.buffer_size = 30.0  # absolute chunk buffer (m) applied to all chunk-based processing.
         self.chunk_overlap = 0.1  # chunk overlap (fraction). 0.05–0.3. More reduces seam artifacts.
         self.num_workers = 8  # parallel workers. <= physical cores/RAM capacity.
+
+        # Reuse same overlap context for ICP unless you intentionally override it later.
+        self.icp_overlap_buffer = self.buffer_size
 
         # Set overall GDAL settings
         gdal.UseExceptions()  # Enable exceptions instead of silent failures
