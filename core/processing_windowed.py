@@ -86,17 +86,7 @@ def process_chunk_to_dsm(input_file, large_chunk_bbox, small_chunk_bbox, temp_di
         f"[ERROR] PDAL execution failed: {e}. Empty chunk."
         return None
 
-    try:
-        subprocess.run([
-            "gdal_fillnodata.py",
-            "-md", "10",
-            "-si", "2",
-            chunk_file,
-            chunk_file
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        #print("[INFO] Nodata gaps filled with GDAL.")
-    except subprocess.CalledProcessError as e:
-        print(f"[ERROR] GDAL fillnodata failed: {e}")
+    return chunk_file
 
 
 def process_chunk_to_dem(input_file, large_chunk_bbox, small_chunk_bbox, temp_dir, rigidness, iterations, resolution, time_step, cloth_resolution=1, fill_gaps=True, filter_smrf=False, scalar=None, slope=None, window=None, threshold=None, filter_csf=False):
@@ -165,19 +155,6 @@ def process_chunk_to_dem(input_file, large_chunk_bbox, small_chunk_bbox, temp_di
         print("[ERROR] gdalwarp failed:")
         print(e.stderr.decode('utf-8'))
         return None
-
-    if fill_gaps:
-        try:
-            subprocess.run([
-                "gdal_fillnodata.py",
-                "-md", "10",
-                "-si", "2",
-                chunk_file,
-                chunk_file
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] GDAL fillnodata failed: {e}")
-            return None
 
     return chunk_file
 

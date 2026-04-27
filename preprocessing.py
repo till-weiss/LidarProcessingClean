@@ -293,6 +293,25 @@ def merge_and_clean_las(
                 else:
                     print(f"No processed strips available for {target_fp}.")
 
+            elif processed_strip_files:
+                merge_and_crop_strips(
+                    processed_strip_files,
+                    target_geom_wkt,
+                    final_output_file,
+                )
+                print(f"Final processed LAS file saved: {final_output_file}")
+            else:
+                print(f"No processed strips available for {target_fp}.")
+
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+            target_fp_dir = os.path.join(run_merged_dir, target_fp)
+            if os.path.isdir(target_fp_dir) and not os.listdir(target_fp_dir):
+                os.rmdir(target_fp_dir)
+
+            continue
+
         # -------------------------------------------------------------
         # original chunk mode
         # -------------------------------------------------------------
