@@ -15,14 +15,14 @@ class Configuration:
     def __init__(self):
 
         # --------- RUN NAME ---------
-        self.run_name = 'Perma-X-2025-Ingmar'  # Custom name for this run
-        self.year = 2025
+        self.run_name = 'Perma-X-2023-Till'  # Custom name for this run
+        self.year = 2023
 
         # ---------- PATHS -----------
         # Input data paths
-        self.target_area_dir = '/isipd/projects/p_planetdw/data/lidar/01_target_areas/Ingmar'  # Path to vector footprints of target areas
-        self.las_files_dir = '/isipd/projects-noreplica/p_macsprocessing/PermaX_MACS/PermaX_2025/data_products/WC_PeelSlumps_20250801_15cm_03/PointClouds'  # Path to lidar point clouds (*.las/*.laz)
-        self.las_footprints_dir = f'/isipd/projects/p_planetdw/data/lidar/03_las_footprints/Ingmar'  # Path to footprints of flight paths, if not available will be generated
+        self.target_area_dir = '/isipd/projects/p_planetdw/data/lidar/01_target_areas/Till'  # Path to vector footprints of target areas
+        self.las_files_dir = f'/isipd/projects/p_planetdw/data/lidar/02_pointclouds/{self.year}'  # Path to lidar point clouds (*.las/*.laz)
+        self.las_footprints_dir = f'/isipd/projects/p_planetdw/data/lidar/03_las_footprints/{self.year}'  # Path to footprints of flight paths, if not available will be generated
 
         # Output directories
         self.preprocessed_dir = '/isipd/projects/p_planetdw/data/lidar/04_preprocessed'  # Path for preprocessed lidar data
@@ -40,10 +40,21 @@ class Configuration:
         # SOR parameters (Statistical Outlier Removal)
         self.knn = 100  # neighbors for stats. 50–200 is common. Higher = stabler but slower.
         self.multiplier = 1  # (mean + m*std). Lower (0.8–1.2) = aggressive; higher (1.5–2.5) = conservative.
+        self.sor_passes = 3  # number of SOR passes per chunk. Each pass further removes outliers. Typical 2–5.
+
+        # ELM filter (Extended Local Minimum – removes isolated low-noise points below the ground surface)
+        self.elm_filter = True  # enable ELM filter
+        self.elm_cell = 10.0   # cell size (m) for local minimum estimation. Smaller = finer noise detection.
+        self.elm_threshold = 1.0  # points this far (m) below the cell minimum are classified as noise.
+
+        # Radius outlier filter (removes points with too few neighbours within a given radius)
+        self.radius_filter = False  # enable radius-based outlier removal
+        self.radius_filter_radius = 1.0   # search radius (m). Smaller = only very isolated points removed.
+        self.radius_filter_min_count = 4  # minimum neighbours within radius to keep a point.
 
         # ------- PROCESSING --------
 
-        self.create_DSM = False
+        self.create_DSM = True
         self.create_DEM = True
         self.create_CHM = False
 
@@ -54,9 +65,9 @@ class Configuration:
 
         # ______ GROUND FILTERING ______
 
-        self.smrf_filter = True  # use SMRF filter 
+        self.smrf_filter = False  # use SMRF filter 
         self.csf_filter = True  # use cloth simulation method
-        self.threshold = 0.5  # vertical tolerance (m) for extra clipping. Typical 0.5–2.
+        self.threshold = 0.1  # vertical tolerance (m) for extra clipping. Typical 0.5–2.
 
         # SMRF
         self.smrf_window_size = 20  # window size (m). Larger (15–30) removes more canopy but may bridge narrow valleys.
@@ -64,10 +75,10 @@ class Configuration:
         self.smrf_scalar = 2  # elevation diff scale. 1–3 typical. Higher = more aggressive ground acceptance.
 
         # CSF (Cloth Simulation)
-        self.csf_rigidness = 3  # cloth stiffness. 1–2 for rugged/steep; 3–4 for very flat urban.
-        self.csf_iterations = 500  # steps. 200–1000. More = better fit, slower.
+        self.csf_rigidness = 5  # cloth stiffness. 1–2 for rugged/steep; 3–4 for very flat urban.
+        self.csf_iterations = 200  # steps. 200–1000. More = better fit, slower.
         self.csf_time_step = 1  # integration step. 0.5–1.0 common. Smaller = stable/accurate, slower.
-        self.csf_cloth_resolution = 1  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
+        self.csf_cloth_resolution = 2  # grid spacing (m). 0.5–2 typical. Smaller = finer ground detail, heavier.
 
         # ------ VALIDATION ------
 
@@ -91,9 +102,15 @@ class Configuration:
         self.end_date = '2023-07-10'  # End date for filtering las files
 
         # _______ Processing _______
-        self.chunk_size = 1000  # chunk size (m). 250–1000 typical. Larger = fewer edges, more memory.
-        self.chunk_overlap = 0.1  # chunk overlap (fraction). 0.05–0.3. More reduces seam artifacts.
+        self.chunk_size = 5000  # chunk size (m) for main processing. 250–1000 typical. Larger = fewer edges, more memory.
+        self.chunk_overlap = 0.1  # chunk overlap (fraction) for main processing. 0.05–0.3. More reduces seam artifacts.
         self.num_workers = 8  # parallel workers. <= physical cores/RAM capacity.
+
+        # _______ Preprocessing _______
+        self.preprocess_chunk_size = 500   # chunk size (m) for preprocessing. Smaller than main = lighter SOR passes.
+        self.preprocess_chunk_overlap = 0.1  # overlap fraction for preprocessing chunks. Reduces SOR edge artefacts.
+        self.preprocess_reproject_vertical = False  # If True, convert vertical datum during preprocessing.
+        self.preprocess_vertical_target_epsg = 3855  # Target vertical EPSG (EGM2008). Used only when preprocess_reproject_vertical is True.
 
         # Set overall GDAL settings
         gdal.UseExceptions()  # Enable exceptions instead of silent failures
@@ -116,5 +133,13 @@ class Configuration:
                 os.makedirs(path, exist_ok=True)
             except OSError:
                 raise ConfigError(f"Unable to create folder: {path_attr} = {path}")
+
+        if self.preprocess_reproject_vertical:
+            if self.preprocess_vertical_target_epsg is None:
+                raise ConfigError("preprocess_vertical_target_epsg must be set when preprocess_reproject_vertical is True")
+            try:
+                self.preprocess_vertical_target_epsg = int(self.preprocess_vertical_target_epsg)
+            except (TypeError, ValueError):
+                raise ConfigError("preprocess_vertical_target_epsg must be an integer EPSG code")
 
         return self

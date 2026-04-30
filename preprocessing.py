@@ -152,7 +152,11 @@ def match_footprints(target_footprint_dir, las_footprint_dir, las_file_dir, out_
     return target_dict
 
 
-def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_dir, max_elev, sor_knn, sor_multiplier, num_workers, chunk_size=1000):
+def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_dir, max_elev, sor_knn, sor_multiplier,
+                        sor_passes, elm_filter, elm_cell, elm_threshold,
+                        radius_filter, radius_filter_radius, radius_filter_min_count,
+                        num_workers, chunk_size=500, chunk_overlap=0.1,
+                        reproject_vertical=True, target_vertical_epsg=3855):
 
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
@@ -184,7 +188,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         processed_chunks = []
         process_args = []
 
-        for input_file in las_files:
+        for input_file in tqdm(las_files, desc=f"Preparing {target_fp}", unit="las"):
             if not is_utm_crs(input_file):
                 # Handle both .las and .laz extensions
                 base_name = os.path.basename(input_file)
@@ -198,22 +202,17 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 gdf = gdf.to_crs(epsg=ref_crs)
 
             target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+            large_chunks, orig_chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size, chunk_overlap)
 
-            if max_elev:
-
-                all_z = laspy.read(input_file).z
-                max_z = np.quantile(all_z, max_elev)
-                min_z = np.quantile(all_z, 1 - max_elev)
-
-            else:
-                all_z = laspy.read(input_file).z
-                max_z = np.max(all_z)
-                min_z = np.min(all_z)
-
-
-            for chunk in chunks:
-                process_args.append((input_file, chunk, temp_dir, max_z, min_z, sor_knn, sor_multiplier, ref_scale, ref_offset, ref_crs))
+            for large_chunk, orig_chunk in zip(large_chunks, orig_chunks):
+                process_args.append((
+                    input_file, large_chunk, orig_chunk, temp_dir, None, None,
+                    sor_knn, sor_multiplier, sor_passes,
+                    elm_filter, elm_cell, elm_threshold,
+                    radius_filter, radius_filter_radius, radius_filter_min_count,
+                    reproject_vertical, target_vertical_epsg,
+                    ref_scale, ref_offset, ref_crs,
+                ))
 
         with tqdm(total=len(process_args), desc=f"Processing {target_fp}", unit="chunk") as pbar:
             with Pool(processes=num_workers) as pool:
@@ -283,9 +282,19 @@ def preprocess_all(conf):
         max_elev=config.max_elevation_threshold,
         sor_knn=config.knn,
         sor_multiplier=config.multiplier,
+        sor_passes=config.sor_passes,
+        elm_filter=config.elm_filter,
+        elm_cell=config.elm_cell,
+        elm_threshold=config.elm_threshold,
+        radius_filter=config.radius_filter,
+        radius_filter_radius=config.radius_filter_radius,
+        radius_filter_min_count=config.radius_filter_min_count,
+        reproject_vertical=config.preprocess_reproject_vertical,
+        target_vertical_epsg=config.preprocess_vertical_target_epsg,
         num_workers=config.num_workers,
         run_name=run_name,
-        chunk_size=config.chunk_size
+        chunk_size=config.preprocess_chunk_size,
+        chunk_overlap=config.preprocess_chunk_overlap,
     )
 
     print(f"\nPreprocessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.\n")
