@@ -114,7 +114,7 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
 
         base_name = os.path.splitext(os.path.basename(las_file))[0]
         temp_dsm_dir = os.path.join(temp_folder, base_name)
-        final_dsm_path = os.path.join(final_output_folder, f"{base_name}_DSM.tif")
+        final_dsm_path = os.path.join(final_output_folder, f"{base_name}_DSM_{resolution}m.tif")
 
         if not os.path.exists(final_dsm_path):
 
@@ -159,7 +159,7 @@ def generate_dsm(input_folder, output_folder, run_name, method, resolution, chun
             plt.colorbar(label='Elevation (m)')
             plt.title(f'DSM: {base_name}')
             plt.axis('off')
-            plt.savefig(os.path.join(final_output_folder, f"{base_name}_DSM.png"), bbox_inches='tight', pad_inches=0.1, dpi=300)
+            plt.savefig(os.path.join(final_output_folder, f"{base_name}_DSM_{resolution}m.png"), bbox_inches='tight', pad_inches=0.1, dpi=300)
             plt.close()  # Ensure we close the plot to free memory
 
 
@@ -204,7 +204,7 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
         
         base_name = os.path.splitext(os.path.basename(las_file))[0]
         temp_dtm_dir = os.path.join(temp_folder, base_name)
-        final_dtm_path = os.path.join(final_output_folder, f"{base_name}_DTM.tif")
+        final_dtm_path = os.path.join(final_output_folder, f"{base_name}_DTM_{resolution}m.tif")
 
         if not os.path.exists(final_dtm_path):
 
@@ -270,7 +270,7 @@ def generate_dtm(input_folder, output_folder, run_name, resolution, chunk_size, 
             plt.colorbar(label='Elevation (m)')
             plt.title(f'DTM: {base_name}')
             plt.axis('off')
-            plt.savefig(os.path.join(final_output_folder, f"{base_name}_DTM.png"), bbox_inches='tight', pad_inches=0.1)
+            plt.savefig(os.path.join(final_output_folder, f"{base_name}_DTM_{resolution}m.png"), bbox_inches='tight', pad_inches=0.1)
             plt.close()  # Ensure we close the plot to free memory
 
             shutil.rmtree(temp_dtm_dir, ignore_errors=True)
