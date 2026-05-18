@@ -310,7 +310,11 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 gdf_local = gdf
 
             target_geom_wkt = wkt_dumps(shape(gdf_local.geometry.iloc[0]))
-            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
+            large_chunks, orig_chunks = create_chunks_from_wkt(
+                target_geom_wkt,
+                chunk_size,
+                chunk_overlap,
+            )
 
             all_z = laspy.read(strip_input).z
             if max_elev:
@@ -320,16 +324,26 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                 max_z = np.max(all_z)
                 min_z = np.min(all_z)
 
-            for chunk in chunks:
+            for large_chunk, orig_chunk in zip(large_chunks, orig_chunks):
                 process_args.append(
                     (
                         strip_input,
-                        chunk,
+                        large_chunk,
+                        orig_chunk,
                         temp_dir,
                         max_z,
                         min_z,
                         sor_knn,
                         sor_multiplier,
+                        sor_passes,
+                        elm_filter,
+                        elm_cell,
+                        elm_threshold,
+                        radius_filter,
+                        radius_filter_radius,
+                        radius_filter_min_count,
+                        True,
+                        3855,
                         ref_scale,
                         ref_offset,
                         ref_crs,
