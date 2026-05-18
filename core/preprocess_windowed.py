@@ -13,7 +13,7 @@ import config.config as config
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
 
 
-def create_chunks_from_wkt(target_geom_wkt, chunk_size=100):
+def create_chunks_from_wkt(target_geom_wkt, chunk_size=100, overlap=0.1):
     """Create grid chunks based on the bounding box of the target geometry."""
     target_geom = wkt_loads(target_geom_wkt)
     min_x, min_y, max_x, max_y = target_geom.bounds
