@@ -9,28 +9,55 @@ import rasterio
 from rasterio.enums import Resampling
 
 
-AOI_name = "Inuvik_Macs_Lidar"
+AOI_name = "Inuvik_Carl"
 DEM = "DSM"
 output_dir = f"/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/DoD/{AOI_name}/{DEM}"
 
-dem_2023 = xdem.DEM("/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/DoD/Inuvik_Macs/DSM/Inuvik_Macs_dDSM_simple.tif")
-dem_2025 = xdem.DEM("/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/DoD/Inuvik_2m/DSM/Inuvik_2m_dDSM_simple.tif")
+dem_2023 = xdem.DEM("/isipd/projects/p_planetdw/data/lidar/05_results/Perma-X-2023-Till/DSM/Inuvik_DSM_2023_2m.tif")
+dem_2025 = xdem.DEM("/isipd/projects/p_planetdw/data/lidar/05_results/Perma-X-2025-Till/DSM/Inuvik_DSM_2025_2m.tif")
 
 
-def calc_ddem_stats(ddem):
+# -------------------------------------------------------------------------
+# Robust statistics with NaN / nodata / outlier filtering
+# -------------------------------------------------------------------------
+
+def calc_ddem_stats(ddem, outlier_threshold=20):
+    """
+    Calculate robust dDEM statistics.
+
+    Parameters
+    ----------
+    ddem : xdem.DEM
+        Difference DEM.
+    outlier_threshold : float
+        Absolute threshold for filtering extreme artefacts (m).
+
+    Returns
+    -------
+    dict
+        Dictionary with statistics.
+    """
+
     arr = ddem.data
     nodata = getattr(ddem, "nodata", None)
 
+    # Handle masked arrays
     if np.ma.isMaskedArray(arr):
         vals = arr.compressed().astype(float)
     else:
         vals = np.asarray(arr, dtype=float).ravel()
 
+    # Remove NaN / inf
     vals = vals[np.isfinite(vals)]
 
+    # Remove nodata values
     if nodata is not None and np.isfinite(nodata):
-        vals = vals[vals != float(nodata)]
+        vals = vals[~np.isclose(vals, float(nodata))]
 
+    # Remove extreme artefacts
+    vals = vals[np.abs(vals) <= outlier_threshold]
+
+    # Empty check
     if vals.size == 0:
         return {
             "n": 0,
@@ -38,24 +65,37 @@ def calc_ddem_stats(ddem):
             "median": np.nan,
             "nmad": np.nan,
             "std": np.nan,
+            "rmse": np.nan,
             "min": np.nan,
             "max": np.nan,
             "p95_abs": np.nan,
         }
 
+    # Statistics
+    mean = float(np.mean(vals))
+    median = float(np.median(vals))
+    std = float(np.std(vals))
+    rmse = float(np.sqrt(np.mean(vals**2)))
+
     return {
         "n": int(vals.size),
-        "mean": float(np.mean(vals)),
-        "median": float(np.median(vals)),
+        "mean": mean,
+        "median": median,
         "nmad": float(xdem.spatialstats.nmad(vals)),
-        "std": float(np.std(vals)),
+        "std": std,
+        "rmse": rmse,
         "min": float(np.min(vals)),
         "max": float(np.max(vals)),
         "p95_abs": float(np.percentile(np.abs(vals), 95)),
     }
 
 
-def calc_stats_from_mask(ddem, mask):
+# -------------------------------------------------------------------------
+# Robust masked statistics
+# -------------------------------------------------------------------------
+
+def calc_stats_from_mask(ddem, mask, outlier_threshold=20):
+
     arr = ddem.data
     nodata = getattr(ddem, "nodata", None)
 
@@ -65,11 +105,18 @@ def calc_stats_from_mask(ddem, mask):
         data = np.asarray(arr, dtype=float)
 
     vals = data[mask]
+
+    # Remove NaN / inf
     vals = vals[np.isfinite(vals)]
 
+    # Remove nodata
     if nodata is not None and np.isfinite(nodata):
         vals = vals[~np.isclose(vals, float(nodata))]
 
+    # Remove extreme artefacts
+    vals = vals[np.abs(vals) <= outlier_threshold]
+
+    # Empty check
     if vals.size == 0:
         return {
             "n": 0,
@@ -77,31 +124,49 @@ def calc_stats_from_mask(ddem, mask):
             "median": np.nan,
             "nmad": np.nan,
             "std": np.nan,
+            "rmse": np.nan,
             "min": np.nan,
             "max": np.nan,
             "p95_abs": np.nan,
         }
 
+    # Statistics
+    mean = float(np.mean(vals))
+    median = float(np.median(vals))
+    std = float(np.std(vals))
+    rmse = float(np.sqrt(np.mean(vals**2)))
+
     return {
         "n": int(vals.size),
-        "mean": float(np.mean(vals)),
-        "median": float(np.median(vals)),
+        "mean": mean,
+        "median": median,
         "nmad": float(xdem.spatialstats.nmad(vals)),
-        "std": float(np.std(vals)),
+        "std": std,
+        "rmse": rmse,
         "min": float(np.min(vals)),
         "max": float(np.max(vals)),
         "p95_abs": float(np.percentile(np.abs(vals), 95)),
     }
 
 
-def get_valid_raster_values(raster):
+# -------------------------------------------------------------------------
+# Robust raster value extraction
+# -------------------------------------------------------------------------
+
+def get_valid_raster_values(raster, outlier_threshold=20):
+
     arr = np.asarray(raster.data, dtype=float).ravel()
     nodata = getattr(raster, "nodata", None)
 
+    # Remove NaN / inf
     vals = arr[np.isfinite(arr)]
 
+    # Remove nodata
     if nodata is not None and np.isfinite(nodata):
         vals = vals[~np.isclose(vals, float(nodata))]
+
+    # Remove extreme artefacts
+    vals = vals[np.abs(vals) <= outlier_threshold]
 
     return vals
 
