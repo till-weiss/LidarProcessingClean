@@ -16,9 +16,11 @@ from shapely.geometry import shape
 from shapely.wkt import loads as wkt_loads, dumps as wkt_dumps
 
 from core.reprojection import get_utm_epsg, reproject_las, is_utm_crs
-from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks
+from core.preprocess_windowed import create_chunks_from_wkt, process_chunk, merge_and_crop_chunks, process_strip, merge_and_crop_strips
 from core.extract_footprints import extract_footprint_batch
 from core.utils import split_gpkg
+import config.config as config
+from core.icp import align_strips_incremental_icp
 
 
 def get_las_header(las_file):
@@ -170,49 +172,168 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
             continue
 
         clean_target_fp = os.path.splitext(target_fp)[0]
-        final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.las")
+        final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
 
         if os.path.exists(final_output_file):
             print(f"Skipping {target_fp}: Already processed.")
             continue
 
-        footprint_path = os.path.join(target_footprint_dir, target_fp if target_fp.endswith('.gpkg') else f"{target_fp}.gpkg")
+        footprint_path = os.path.join(
+            target_footprint_dir,
+            target_fp if target_fp.endswith(".gpkg") else f"{target_fp}.gpkg"
+        )
         if not os.path.exists(footprint_path):
             print(f"Footprint file {footprint_path} not found. Skipping.")
             continue
 
         gdf = gpd.read_file(footprint_path)
+
         temp_dir = os.path.join(run_merged_dir, target_fp, "temp")
         os.makedirs(temp_dir, exist_ok=True)
 
+        target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
+
+        # -------------------------------------------------------------
+        # strip-preserving mode
+        # -------------------------------------------------------------
+        if config.preprocess_by_strip:
+            processed_strip_files = []
+
+            out_dir = os.path.join(run_merged_dir, target_fp, "strips")
+            os.makedirs(out_dir, exist_ok=True)
+
+            print(f"Input strips for {target_fp}: {len(las_files)}")
+
+            for input_file in las_files:
+                try:
+                    strip_input = input_file
+
+                    if not is_utm_crs(strip_input):
+                        base_name = os.path.basename(strip_input)
+                        base_name = base_name.replace(".las", "_utm.las").replace(".laz", "_utm.laz")
+                        utm_output_file = os.path.join(temp_dir, base_name)
+                        strip_input = reproject_las(strip_input, utm_output_file)
+
+                    ref_scale, ref_offset, ref_crs = get_las_header(strip_input)
+
+                    if gdf.crs.to_epsg() != ref_crs:
+                        gdf_local = gdf.to_crs(epsg=ref_crs)
+                    else:
+                        gdf_local = gdf
+
+                    target_geom_wkt = wkt_dumps(shape(gdf_local.geometry.iloc[0]))
+
+                    all_z = laspy.read(strip_input).z
+                    if max_elev:
+                        max_z = np.quantile(all_z, max_elev)
+                        min_z = np.quantile(all_z, 1 - max_elev)
+                    else:
+                        max_z = np.max(all_z)
+                        min_z = np.min(all_z)
+
+                    processed_file = process_strip(
+                        input_file=strip_input,
+                        target_gdf=target_geom_wkt,
+                        out_dir=out_dir,
+                        max_z=max_z,
+                        min_z=min_z,
+                        sor_knn=config.sor_knn,
+                        sor_multiplier=config.sor_multiplier,
+                        ref_scale=ref_scale,
+                        ref_offset=ref_offset,
+                        ref_crs=ref_crs,
+                    )
+
+                    if processed_file and os.path.exists(processed_file):
+                        processed_strip_files.append(processed_file)
+
+                except Exception as e:
+                    print(f"Error preparing strip {input_file}: {e}")
+
+            if getattr(config, "enable_icp", True) and len(processed_strip_files) > 1:
+                print(f"Running sequential ICP strip alignment for {target_fp}...")
+                icp_result = align_strips_incremental_icp(
+                    processed_strip_files=processed_strip_files,
+                    target_fp=target_fp,
+                    config=config,
+                )
+
+                accepted_outputs = icp_result.get("accepted_outputs", [])
+                fallback_outputs = icp_result.get("fallback_outputs", [])
+                discarded_outputs = icp_result.get("discarded_outputs", [])
+
+                if accepted_outputs:
+                    merged_aligned_file = os.path.join(
+                        run_merged_dir, f"{target_fp}_aligned_merged.laz"
+                    )
+                    merge_and_crop_strips(
+                        accepted_outputs,
+                        target_geom_wkt,
+                        merged_aligned_file
+                    )
+                else:
+                    print(f"No accepted ICP strips available for {target_fp}.")
+
+                all_outputs = accepted_outputs + fallback_outputs
+                if all_outputs:
+                    final_output_file = os.path.join(run_merged_dir, f"{clean_target_fp}.laz")
+                    merge_and_crop_strips(
+                        all_outputs,
+                        target_geom_wkt,
+                        final_output_file
+                    )
+                    print(f"Final processed LAS file saved: {final_output_file}")
+                else:
+                    print(f"No processed strips available for {target_fp}.")
+
+        # -------------------------------------------------------------
+        # original chunk mode
+        # -------------------------------------------------------------
         processed_chunks = []
         process_args = []
 
         for input_file in tqdm(las_files, desc=f"Preparing {target_fp}", unit="las"):
-            if not is_utm_crs(input_file):
-                # Handle both .las and .laz extensions
-                base_name = os.path.basename(input_file)
-                base_name = base_name.replace('.las', '_utm.las').replace('.laz', '_utm.las')
-                utm_output_file = os.path.join(temp_dir, base_name)
-                input_file = reproject_las(input_file, utm_output_file)
+            strip_input = input_file
 
-            ref_scale, ref_offset, ref_crs = get_las_header(input_file)
+            if not is_utm_crs(strip_input):
+                base_name = os.path.basename(strip_input)
+                base_name = base_name.replace(".las", "_utm.las").replace(".laz", "_utm.laz")
+                utm_output_file = os.path.join(temp_dir, base_name)
+                strip_input = reproject_las(strip_input, utm_output_file)
+
+            ref_scale, ref_offset, ref_crs = get_las_header(strip_input)
 
             if gdf.crs.to_epsg() != ref_crs:
-                gdf = gdf.to_crs(epsg=ref_crs)
+                gdf_local = gdf.to_crs(epsg=ref_crs)
+            else:
+                gdf_local = gdf
 
-            target_geom_wkt = wkt_dumps(shape(gdf.geometry.iloc[0]))
-            large_chunks, orig_chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size, chunk_overlap)
+            target_geom_wkt = wkt_dumps(shape(gdf_local.geometry.iloc[0]))
+            chunks = create_chunks_from_wkt(target_geom_wkt, chunk_size)
 
-            for large_chunk, orig_chunk in zip(large_chunks, orig_chunks):
-                process_args.append((
-                    input_file, large_chunk, orig_chunk, temp_dir, None, None,
-                    sor_knn, sor_multiplier, sor_passes,
-                    elm_filter, elm_cell, elm_threshold,
-                    radius_filter, radius_filter_radius, radius_filter_min_count,
-                    reproject_vertical, target_vertical_epsg,
-                    ref_scale, ref_offset, ref_crs,
-                ))
+            all_z = laspy.read(strip_input).z
+            if max_elev:
+                max_z = np.quantile(all_z, max_elev)
+                min_z = np.quantile(all_z, 1 - max_elev)
+            else:
+                max_z = np.max(all_z)
+                min_z = np.min(all_z)
+
+            for chunk in chunks:
+                process_args.append(
+                    (
+                        strip_input,
+                        chunk,
+                        temp_dir,
+                        max_z,
+                        min_z,
+                        sor_knn,
+                        sor_multiplier,
+                        ref_scale,
+                        ref_offset,
+                        ref_crs,
+                    )
+                )
 
         with tqdm(total=len(process_args), desc=f"Processing {target_fp}", unit="chunk") as pbar:
             with Pool(processes=num_workers) as pool:
@@ -249,9 +370,14 @@ def preprocess_all(conf):
     os.makedirs(os.path.join(config.preprocessed_dir, run_name), exist_ok=True)
     os.makedirs(os.path.join(config.results_dir, run_name), exist_ok=True)
 
-    gdfs = os.listdir(config.target_area_dir)
+    gdfs = sorted(
+        f for f in os.listdir(config.target_area_dir)
+        if f.lower().endswith(".gpkg") and not f.startswith("."))    
+    
     for gdf in gdfs:
         gdf_path = os.path.join(config.target_area_dir, gdf)
+
+
         gdf_loaded = gpd.read_file(gdf_path)
         if len(gdf_loaded) > 1:
             print("\n--- Target areas are multi-geometry. Splitting into separate files ---")
@@ -294,7 +420,8 @@ def preprocess_all(conf):
         num_workers=config.num_workers,
         run_name=run_name,
         chunk_size=config.preprocess_chunk_size,
-        chunk_overlap=config.preprocess_chunk_overlap,
+        chunk_overlap=config.preprocess_chunk_overlap,, 
+        config=config
     )
 
     print(f"\nPreprocessing completed in {str(timedelta(seconds=time.time() - start)).split('.')[0]}.\n")

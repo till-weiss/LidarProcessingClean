@@ -44,7 +44,7 @@ def process_chunk_to_dsm(input_file, large_chunk_bbox, small_chunk_bbox, temp_di
 
     chunk_file = os.path.join(
         temp_dir,
-        f"{os.path.basename(input_file).replace('.las', '')}_chunk_{int(small_chunk_bbox.bounds[0])}_{int(small_chunk_bbox.bounds[1])}.tif"
+        f"{os.path.basename(input_file).replace('.las', '')}_chunk_{int(small_chunk_bbox.bounds[0])}_{int(small_chunk_bbox.bounds[1])}_{resolution}m.tif"
     )
 
     pipeline = [
@@ -91,7 +91,7 @@ def process_chunk_to_dem(input_file, large_chunk_bbox, small_chunk_bbox, temp_di
 
     chunk_file = os.path.join(
         temp_dir,
-        f"{os.path.basename(input_file).replace('.las', '')}_chunk_{int(small_chunk_bbox.bounds[0])}_{int(small_chunk_bbox.bounds[1])}.tif"
+        f"{os.path.basename(input_file).replace('.las', '')}_chunk_{int(small_chunk_bbox.bounds[0])}_{int(small_chunk_bbox.bounds[1])}_{resolution}m.tif"
     )
 
     pipeline = [
