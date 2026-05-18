@@ -406,8 +406,8 @@ def preprocess_all(conf):
         las_dict=target_dict,
         preprocessed_dir=config.preprocessed_dir,
         max_elev=config.max_elevation_threshold,
-        sor_knn=config.knn,
-        sor_multiplier=config.multiplier,
+        sor_knn=config.sor_knn,
+        sor_multiplier=config.sor_multiplier,
         sor_passes=config.sor_passes,
         elm_filter=config.elm_filter,
         elm_cell=config.elm_cell,
@@ -420,7 +420,7 @@ def preprocess_all(conf):
         num_workers=config.num_workers,
         run_name=run_name,
         chunk_size=config.preprocess_chunk_size,
-        chunk_overlap=config.preprocess_chunk_overlap,, 
+        chunk_overlap=config.preprocess_chunk_overlap,
         config=config
     )
 
