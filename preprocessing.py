@@ -158,7 +158,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                         sor_passes, elm_filter, elm_cell, elm_threshold,
                         radius_filter, radius_filter_radius, radius_filter_min_count,
                         num_workers, chunk_size=500, chunk_overlap=0.1,
-                        reproject_vertical=True, target_vertical_epsg=3855):
+                        reproject_vertical=True, target_vertical_epsg=3855, config=None):
 
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
@@ -196,7 +196,8 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         # -------------------------------------------------------------
         # strip-preserving mode
         # -------------------------------------------------------------
-        if config.preprocess_by_strip:
+        preprocess_by_strip = getattr(config, "preprocess_by_strip", True)
+        if preprocess_by_strip:
             processed_strip_files = []
 
             out_dir = os.path.join(run_merged_dir, target_fp, "strips")
