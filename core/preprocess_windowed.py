@@ -269,7 +269,6 @@ def merge_and_crop_strips(strip_files, target_geom_wkt, output_file):
         print(f"Error merging and cropping: {e}")
         return None
 
-def process_las_files(las_dict, preprocessed_dir, num_workers=4, chunk_size=100, sor_knn=8, sor_multiplier=2.0):
 def process_las_files(
     las_dict, preprocessed_dir, num_workers=4,
     chunk_size=500, chunk_overlap=0.1,

@@ -29,6 +29,22 @@ def main() -> None:
     config.resolution = 2 
     config.overlap = 0.2
 
+    # --- Preprocessing tuning (aligned with current preprocess implementation) ---
+    config.preprocess_chunk_size = 500
+    config.preprocess_chunk_overlap = 0.1
+    config.sor_knn = 100
+    config.sor_multiplier = 1.0
+    config.sor_passes = 3
+    config.elm_filter = True
+    config.elm_cell = 10.0
+    config.elm_threshold = 1.0
+    config.radius_filter = False
+    config.radius_filter_radius = 1.0
+    config.radius_filter_min_count = 4
+
+    # --- ICP ---
+    config.enable_icp = True
+
     config.create_DSM = True
     config.create_DEM = True
     config.create_CHM = False

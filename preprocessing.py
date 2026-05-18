@@ -158,7 +158,7 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
                         sor_passes, elm_filter, elm_cell, elm_threshold,
                         radius_filter, radius_filter_radius, radius_filter_min_count,
                         num_workers, chunk_size=500, chunk_overlap=0.1,
-                        reproject_vertical=True, target_vertical_epsg=3855):
+                        reproject_vertical=True, target_vertical_epsg=3855, config=None):
 
     run_merged_dir = os.path.join(preprocessed_dir, run_name)
     os.makedirs(run_merged_dir, exist_ok=True)
@@ -196,7 +196,8 @@ def merge_and_clean_las(las_dict, preprocessed_dir, run_name, target_footprint_d
         # -------------------------------------------------------------
         # strip-preserving mode
         # -------------------------------------------------------------
-        if config.preprocess_by_strip:
+        preprocess_by_strip = getattr(config, "preprocess_by_strip", True)
+        if preprocess_by_strip:
             processed_strip_files = []
 
             out_dir = os.path.join(run_merged_dir, target_fp, "strips")
@@ -406,8 +407,8 @@ def preprocess_all(conf):
         las_dict=target_dict,
         preprocessed_dir=config.preprocessed_dir,
         max_elev=config.max_elevation_threshold,
-        sor_knn=config.knn,
-        sor_multiplier=config.multiplier,
+        sor_knn=config.sor_knn,
+        sor_multiplier=config.sor_multiplier,
         sor_passes=config.sor_passes,
         elm_filter=config.elm_filter,
         elm_cell=config.elm_cell,
@@ -420,7 +421,7 @@ def preprocess_all(conf):
         num_workers=config.num_workers,
         run_name=run_name,
         chunk_size=config.preprocess_chunk_size,
-        chunk_overlap=config.preprocess_chunk_overlap,, 
+        chunk_overlap=config.preprocess_chunk_overlap,
         config=config
     )
 
