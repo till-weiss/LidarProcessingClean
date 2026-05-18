@@ -24,42 +24,6 @@ def extract_start_timestamp(strip_path):
     except ValueError:
         return None
 
-def is_crossing_strip(las_file, ratio_threshold=3):
-    with laspy.open(las_file) as f:
-        h = f.header
-
-    width = h.maxs[0] - h.mins[0]
-    height = h.maxs[1] - h.mins[1]
-
-    long_side = max(width, height)
-    short_side = min(width, height)
-
-    if short_side == 0:
-        return True
-
-    return (long_side / short_side) < ratio_threshold
-
-def las_bounds_polygon(las_path):
-    with laspy.open(las_path) as f:
-        hdr = f.header
-        return box(hdr.mins[0], hdr.mins[1], hdr.maxs[0], hdr.maxs[1]), int(hdr.point_count)
-
-def overlap_ratio_from_polygons(poly_a, poly_b):
-    if poly_a is None or poly_b is None:
-        return 0.0
-    if poly_a.is_empty or poly_b.is_empty:
-        return 0.0
-
-    inter_area = poly_a.intersection(poly_b).area
-    if inter_area <= 0:
-        return 0.0
-
-    smaller_area = min(poly_a.area, poly_b.area)
-    if smaller_area <= 0:
-        return 0.0
-
-    return inter_area / smaller_area
-
 def read_las_points(las_path):
     las = laspy.read(las_path)
     xyz = np.column_stack((las.x, las.y, las.z)).astype(np.float64)
@@ -100,7 +64,7 @@ def write_xyz_cloud(xyz, output_path):
     return output_path
 
 
-def filter_and_voxel(xyz, cls, config, temp_dir, prefix):
+def filter_and_voxel(xyz, config, temp_dir, prefix):
     """
     Build ICP-ready points from overlap cloud.
     Prioritises ground-only when possible, with graceful fallback.
@@ -144,7 +108,7 @@ def build_icp_ready_strip(input_strip, output_strip, config, temp_dir, prefix):
 
     input_point_count = int(len(xyz)) if xyz is not None else 0
 
-    icp_xyz = filter_and_voxel(xyz, cls, config, temp_dir, prefix)
+    icp_xyz = filter_and_voxel(xyz, config, temp_dir, prefix)
 
     output_point_count = int(len(icp_xyz)) if icp_xyz is not None else 0
 
