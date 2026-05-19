@@ -7,7 +7,7 @@ import xdem
 import geoutils as gu
 
 from config import Config, make_config, validate_config_paths
-from coregister import run_coregistration
+from coregister import run_coregistration, sanitize_dem_nodata
 from change import compute_change, add_volume_budget
 from report import save_report
 
@@ -24,16 +24,18 @@ def run(cfg: Config) -> None:
     validate_config_paths(cfg)
 
     print("\n[1/4] Loading inputs")
-    ref_dem = xdem.DEM(cfg.dem_reference_path)
-    tba_dem = xdem.DEM(cfg.dem_target_path).reproject(ref_dem)
+    ref_dem = sanitize_dem_nodata(xdem.DEM(cfg.dem_reference_path))
+    tba_dem = sanitize_dem_nodata(xdem.DEM(cfg.dem_target_path).reproject(ref_dem))
 
     stable_mask = None
     if cfg.stable_ground_path is not None:
         stable_vec = gu.Vector(cfg.stable_ground_path)
         stable_mask = np.array(stable_vec.create_mask(ref_dem).data).astype(bool)
-        print(f"  Stable mask: {stable_mask.sum():,} pixels")
+        valid_both = np.isfinite(np.array(ref_dem.data)) & np.isfinite(np.array(tba_dem.data))
+        stable_mask = stable_mask & valid_both
+        print(f"  Stable mask: {stable_mask.sum():,} valid pixels")
     else:
-        print("  No stable mask — using all valid pixels")
+        print("  No stable mask — using all valid overlap pixels")
 
     print("\n[2/4] Co-registration")
     coreg_result = run_coregistration(cfg, ref_dem=ref_dem, tba_dem=tba_dem, stable_mask=stable_mask)

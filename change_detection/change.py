@@ -18,7 +18,7 @@ import xdem
 import geoutils as gu
 
 from config import Config
-from coregister import CoregResult, best_result
+from coregister import CoregResult, best_result, sanitize_dem_nodata
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +109,13 @@ def compute_change(
 
     if ref_dem is None:
         print("Loading reference DEM for change computation...")
-        ref_dem = xdem.DEM(cfg.dem_reference_path)
+        ref_dem = sanitize_dem_nodata(xdem.DEM(cfg.dem_reference_path))
 
     # Compute dDEM: positive = surface raised, negative = surface lowered
     print(f"Computing dDEM using pipeline: {best.pipeline_description}")
-    ddem = best.aligned_dem - ref_dem
+    aligned = sanitize_dem_nodata(best.aligned_dem)
+    ref_dem = sanitize_dem_nodata(ref_dem)
+    ddem = aligned - ref_dem
 
     # ------------------------------------------------------------------
     # Determine change threshold
@@ -125,7 +127,7 @@ def compute_change(
         # Default: 2 * NMAD of the best co-registration residuals.
         # This propagates the alignment uncertainty into the threshold
         # (analogous to Höhle & Höhle 2009 approach).
-        threshold = 2.0 * best.nmad
+        threshold = 2.0 * best.nmad if np.isfinite(best.nmad) else np.nan
         print(f"  Auto-threshold: 2 × NMAD = 2 × {best.nmad:.3f} = {threshold:.3f} m")
 
     # ------------------------------------------------------------------
@@ -133,7 +135,8 @@ def compute_change(
     # ------------------------------------------------------------------
 
     ddem_arr = np.array(ddem.data).astype(np.float32)
-    valid = np.isfinite(ddem_arr)
+    valid = np.isfinite(ddem_arr) & np.isfinite(np.array(ref_dem.data)) & np.isfinite(np.array(aligned.data))
+    ddem_arr[~valid] = np.nan
     vals = ddem_arr[valid]
 
     if len(vals) == 0:
@@ -150,7 +153,7 @@ def compute_change(
     aoi_q683   = float(np.nanpercentile(np.abs(vals), 68.3))
     aoi_q95    = float(np.nanpercentile(np.abs(vals), 95.0))
 
-    change_fraction = float(np.mean(np.abs(vals) > threshold))
+    change_fraction = float(np.mean(np.abs(vals) > threshold)) if np.isfinite(threshold) else np.nan
 
     print(
         f"  AOI  median={aoi_median:+.3f} m  "
@@ -184,8 +187,12 @@ def compute_change(
     # Signed change areas
     # ------------------------------------------------------------------
 
-    subsidence_mask = valid & (ddem_arr < -threshold)
-    heave_mask      = valid & (ddem_arr >  threshold)
+    if np.isfinite(threshold):
+        subsidence_mask = valid & (ddem_arr < -threshold)
+        heave_mask      = valid & (ddem_arr >  threshold)
+    else:
+        subsidence_mask = np.zeros_like(valid, dtype=bool)
+        heave_mask = np.zeros_like(valid, dtype=bool)
 
     subsidence_mean   = float(np.nanmean(ddem_arr[subsidence_mask])) if subsidence_mask.any() else np.nan
     heave_mean        = float(np.nanmean(ddem_arr[heave_mask]))      if heave_mask.any()      else np.nan
@@ -246,6 +253,12 @@ def add_volume_budget(change: ChangeResult, pixel_size_m: float) -> ChangeResult
 
     ddem_arr = np.array(change.ddem.data).astype(np.float32)
     valid = np.isfinite(ddem_arr)
+
+    if not np.isfinite(change.threshold_m):
+        change.volume_loss_m3 = np.nan
+        change.volume_gain_m3 = np.nan
+        print("  Volume loss: nan m³  Volume gain: nan m³ (invalid threshold)")
+        return change
 
     sub_vals  = ddem_arr[valid & (ddem_arr < -change.threshold_m)]
     heave_vals = ddem_arr[valid & (ddem_arr >  change.threshold_m)]

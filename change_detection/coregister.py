@@ -266,6 +266,21 @@ def _compute_metrics(residuals_raw: np.ndarray, clip_m: float) -> dict:
 
 def _describe_pipeline_from_steps(steps: list) -> str:
     return " → ".join(type(s).__name__ for s in steps)
+
+
+def sanitize_dem_nodata(dem: xdem.DEM) -> xdem.DEM:
+    """Convert DEM nodata and common sentinel values to NaN in-place."""
+    arr = np.array(dem.data, dtype=np.float32)
+    nodata = getattr(dem, "nodata", None)
+    if nodata is not None:
+        arr[arr == nodata] = np.nan
+    arr[np.isin(arr, (-9999.0, -99999.0, -32768.0))] = np.nan
+    dem.data = arr
+    try:
+        dem.set_nodata(np.nan)
+    except Exception:
+        pass
+    return dem
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -299,28 +314,34 @@ def run_coregistration(
     # ------------------------------------------------------------------
 
     if ref_dem is None:
-        ref_dem = xdem.DEM(cfg.dem_reference_path)
+        ref_dem = sanitize_dem_nodata(xdem.DEM(cfg.dem_reference_path))
     if tba_dem is None:
-        tba_dem = xdem.DEM(cfg.dem_target_path)
-        tba_dem = tba_dem.reproject(ref_dem)
+        tba_dem = sanitize_dem_nodata(xdem.DEM(cfg.dem_target_path).reproject(ref_dem))
+
+    ref_dem = sanitize_dem_nodata(ref_dem)
+    tba_dem = sanitize_dem_nodata(tba_dem)
+
+    valid_overlap = np.isfinite(np.array(ref_dem.data)) & np.isfinite(np.array(tba_dem.data))
 
     if stable_mask is None:
         if cfg.stable_ground_path is not None:
             stable_vec  = gu.Vector(cfg.stable_ground_path)
             stable_mask = np.array(
                 stable_vec.create_mask(ref_dem).data
-            ).astype(bool)
+            ).astype(bool) & valid_overlap
         else:
             warnings.warn(
                 "No stable ground mask — using all valid pixels. "
                 "Results may reflect real terrain change.",
                 UserWarning,
             )
-            stable_mask = np.ones(ref_dem.data.shape, dtype=bool)
+            stable_mask = valid_overlap.copy()
 
     # ------------------------------------------------------------------
     # Build and run pipeline
     # ------------------------------------------------------------------
+
+    actual_pipeline_desc = pipeline_desc
 
     try:
         steps, pipeline = _build_pipeline(cfg)
@@ -350,6 +371,7 @@ def run_coregistration(
 
     residual_dem = aligned - ref_dem
     residuals_raw = np.array(residual_dem.data).astype(np.float32)
+    residuals_raw[~np.isfinite(np.array(ref_dem.data)) | ~np.isfinite(np.array(aligned.data))] = np.nan
     valid = stable_mask & np.isfinite(residuals_raw)
 
     n_stable = int(valid.sum())
