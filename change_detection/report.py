@@ -20,7 +20,11 @@ import pandas as pd
 
 from config import Config
 from coregister import CoregResult
-from diagnostics import stepwise_table, save_stepwise_evolution_csv, save_final_coreg_diagnostic_plots
+from diagnostics import (
+    stepwise_table,
+    save_stepwise_evolution_csv,
+    create_distribution_figure,
+)
 from change import ChangeResult
 
 
@@ -433,6 +437,40 @@ def save_report(
     import xdem
     ref_dem = xdem.DEM(cfg.dem_reference_path)
     save_stepwise_evolution_csv(best, cfg)
-    save_final_coreg_diagnostic_plots(best, ref_dem, cfg)
+    plots_dir = cfg.output_dir / "outputs" / "plots"
+
+    ref_arr = np.array(ref_dem.data).astype(np.float32)
+    raw_dem = best.step_diagnostics[0].corrected_dem
+    raw_arr = np.array(raw_dem.data).astype(np.float32)
+    final_arr = np.array(best.aligned_dem.data).astype(np.float32)
+    ddsm_arr = np.array(change.ddem.data).astype(np.float32)
+
+    valid_raw = np.isfinite(raw_arr) & np.isfinite(ref_arr)
+    valid_final = np.isfinite(final_arr) & np.isfinite(ref_arr)
+    stable_mask = valid_final.copy()
+
+    raw_res = np.full_like(ref_arr, np.nan, dtype=np.float32)
+    raw_res[valid_raw] = raw_arr[valid_raw] - ref_arr[valid_raw]
+    final_res = np.full_like(ref_arr, np.nan, dtype=np.float32)
+    final_res[valid_final] = final_arr[valid_final] - ref_arr[valid_final]
+
+    create_distribution_figure(
+        values_all=raw_res[valid_raw],
+        values_stable=best.step_diagnostics[0].residuals if best.step_diagnostics else raw_res[valid_raw],
+        title="DSM residual distribution (raw)",
+        out_path=plots_dir / "dsm_distribution_raw.png",
+    )
+    create_distribution_figure(
+        values_all=final_res[valid_final],
+        values_stable=best.residuals,
+        title="DSM residual distribution (final coregistered)",
+        out_path=plots_dir / "dsm_distribution_coreg.png",
+    )
+    create_distribution_figure(
+        values_all=ddsm_arr[np.isfinite(ddsm_arr)],
+        values_stable=ddsm_arr[np.isfinite(ddsm_arr) & stable_mask],
+        title="dDSM distribution (final)",
+        out_path=plots_dir / "ddsm_distribution_final.png",
+    )
     save_rasters(coreg_results, change, cfg)
     print("--- Report complete ---\n")
