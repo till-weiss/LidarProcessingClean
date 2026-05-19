@@ -417,3 +417,16 @@ def run_coregistration(
         flagged=flagged,
         flag_reason="; ".join(flag_reasons),
     )
+
+
+def best_result(coreg_results):
+    """Backwards-compatible selector for best result."""
+    if isinstance(coreg_results, CoregResult):
+        return coreg_results
+    if isinstance(coreg_results, dict):
+        if "_best" in coreg_results:
+            return coreg_results[coreg_results["_best"]]
+        for value in coreg_results.values():
+            if isinstance(value, CoregResult):
+                return value
+    raise TypeError("Unsupported coreg_results container.")

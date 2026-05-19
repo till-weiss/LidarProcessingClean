@@ -23,6 +23,12 @@ from coregister import CoregResult
 from change import ChangeResult
 
 
+def _as_result_map(coreg_results):
+    if isinstance(coreg_results, CoregResult):
+        return {"coreg": coreg_results, "_best": "coreg"}
+    return coreg_results
+
+
 # ---------------------------------------------------------------------------
 # Helper: shared figure style
 # ---------------------------------------------------------------------------
@@ -49,6 +55,7 @@ def plot_coreg_histograms(
     annotated with NMAD. Best method drawn on top with full opacity.
     """
 
+    coreg_results = _as_result_map(coreg_results)
     successful = {
         k: v for k, v in coreg_results.items()
         if k != "_best" and not v.failed and len(v.residuals) > 0
@@ -312,6 +319,7 @@ def save_summary_csv(
     separate row block for change statistics.
     """
 
+    coreg_results = _as_result_map(coreg_results)
     # --- Co-registration table ---
     coreg_rows = []
     best_name = coreg_results["_best"]
@@ -384,6 +392,7 @@ def save_rasters(
 ) -> tuple[Path, Path]:
     """Save the best-aligned DEM and the dDEM as GeoTIFFs."""
 
+    coreg_results = _as_result_map(coreg_results)
     from coregister import best_result
 
     best = best_result(coreg_results)

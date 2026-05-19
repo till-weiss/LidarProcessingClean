@@ -81,7 +81,7 @@ class ChangeResult:
 # ---------------------------------------------------------------------------
 
 def compute_change(
-    coreg_results: dict,
+    coreg_results: CoregResult,
     cfg: Config,
     ref_dem: Optional[xdem.DEM] = None,
     stable_mask: Optional[np.ndarray] = None,
@@ -112,7 +112,7 @@ def compute_change(
         ref_dem = xdem.DEM(cfg.dem_reference_path)
 
     # Compute dDEM: positive = surface raised, negative = surface lowered
-    print(f"Computing dDEM using best method: {best.method_name}")
+    print(f"Computing dDEM using pipeline: {best.pipeline_description}")
     ddem = best.aligned_dem - ref_dem
 
     # ------------------------------------------------------------------
