@@ -145,7 +145,7 @@ class Configuration:
 
 
         self.start_date = '2023-07-10'  # Start date for filtering las files
-        self.end_date = '2023-07-10'  # End date for filtering las files
+        self.end_date = '2024-07-10'  # End date for filtering las files
 
         # _______ Processing _______
         self.chunk_size = 5000  # chunk size (m) for main processing. 250–1000 typical. Larger = fewer edges, more memory.
