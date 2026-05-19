@@ -38,6 +38,9 @@ def run(cfg: Config) -> None:
     print("\n[2/4] Co-registration")
     coreg_result = run_coregistration(cfg, ref_dem=ref_dem, tba_dem=tba_dem, stable_mask=stable_mask)
 
+    if coreg_result.failed:
+        raise RuntimeError(f"Co-registration failed: {coreg_result.failure_reason}")
+
     print("\n[3/4] Change detection")
     change = compute_change(coreg_result, cfg, ref_dem=ref_dem, stable_mask=stable_mask)
     add_volume_budget(change, pixel_size_m=ref_dem.res[0])

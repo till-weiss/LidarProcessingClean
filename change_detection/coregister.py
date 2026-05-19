@@ -28,6 +28,15 @@ import geoutils as gu
 from config import Config
 
 
+def _make_step(*names):
+    """Return first available xdem.coreg step class instantiated."""
+    for name in names:
+        cls = getattr(xdem.coreg, name, None)
+        if cls is not None:
+            return cls()
+    raise AttributeError(f"None of the coreg steps are available: {names}")
+
+
 # ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
@@ -87,22 +96,22 @@ def _build_pipeline(cfg: Config):
     Returns an xdem coreg object (single step or pipeline via +).
     """
 
-    steps = [xdem.coreg.VerticalShift()]
+    steps = [_make_step("VerticalShift")]
 
     if cfg.terrain_mode == "flat":
         # LeastZDifference: finds horizontal translation that minimises
         # vertical differences without requiring slope/aspect.
         # DhMinimize: cleans residual low-frequency vertical trend after
         # geometric correction. Applied second so it has less to absorb.
-        steps.append(xdem.coreg.LeastZDifference())
-        steps.append(xdem.coreg.DhMinimize())
+        steps.append(_make_step("LeastZDifference", "ICP"))
+        steps.append(_make_step("DhMinimize"))
 
     elif cfg.terrain_mode == "sloped":
         # NuthKaab: analytically solves horizontal + vertical offset via
         # the aspect-elevation relationship. Requires slope > ~2–3 deg.
-        steps.append(xdem.coreg.NuthKaab())
+        steps.append(_make_step("NuthKaab"))
         if cfg.apply_terrain_bias:
-            steps.append(xdem.coreg.TerrainBias())
+            steps.append(_make_step("TerrainBias"))
 
     else:
         raise ValueError(
@@ -113,7 +122,7 @@ def _build_pipeline(cfg: Config):
     if cfg.apply_deramp:
         # First-order plane correction for scene-wide tilt.
         # Valid in both modes; only enable after inspecting residual map.
-        steps.append(xdem.coreg.Deramp())
+        steps.append(_make_step("Deramp"))
 
     # Chain steps into a single pipeline object
     pipeline = steps[0]

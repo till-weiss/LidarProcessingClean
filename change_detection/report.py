@@ -128,6 +128,7 @@ def plot_residual_map(
 
     import xdem
 
+    coreg_results = _as_result_map(coreg_results)
     best_name = coreg_results["_best"]
     best: CoregResult = coreg_results[best_name]
 
@@ -423,7 +424,12 @@ def save_report(
     """
 
     print("\n--- Saving report ---")
-    plot_coreg_histograms(coreg_results, cfg)
+    coreg_results = _as_result_map(coreg_results)
+    best = coreg_results[coreg_results["_best"]]
+    if not best.failed and len(best.residuals) > 0:
+        plot_coreg_histograms(coreg_results, cfg)
+    else:
+        print("  Skipping coreg histogram: no successful residual distribution.")
     plot_residual_map(coreg_results, cfg)
     plot_ddem_map(change, cfg)
     plot_ddem_histogram(change, cfg)
