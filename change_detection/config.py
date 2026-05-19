@@ -53,6 +53,19 @@ class Config:
         return " → ".join(steps)
 
 
+def _ensure_exists(path: Path | None, label: str) -> None:
+    if path is None:
+        return
+    if not Path(path).exists():
+        raise FileNotFoundError(f"{label} does not exist: {path}")
+
+
+def validate_config_paths(cfg: Config) -> None:
+    """Fail early with clear path diagnostics before loading rasters."""
+    _ensure_exists(cfg.dem_reference_path, "DEM_REFERENCE_PATH")
+    _ensure_exists(cfg.dem_target_path, "DEM_TARGET_PATH")
+    _ensure_exists(cfg.stable_ground_path, "STABLE_GROUND_PATH")
+
 # ---------------------------------------------------------------------------
 # User-editable settings
 # ---------------------------------------------------------------------------

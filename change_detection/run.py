@@ -6,7 +6,7 @@ import numpy as np
 import xdem
 import geoutils as gu
 
-from config import Config, make_config
+from config import Config, make_config, validate_config_paths
 from coregister import run_coregistration
 from change import compute_change, add_volume_budget
 from report import save_report
@@ -20,6 +20,8 @@ def run(cfg: Config) -> None:
     print(f"  Target    : {cfg.dem_target_path}")
     print(f"  Output    : {cfg.output_dir}")
     print("=" * 60)
+
+    validate_config_paths(cfg)
 
     print("\n[1/4] Loading inputs")
     ref_dem = xdem.DEM(cfg.dem_reference_path)
