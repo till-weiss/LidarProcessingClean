@@ -99,16 +99,15 @@ def _build_pipeline(cfg: Config):
     steps = [_make_step("VerticalShift")]
 
     if cfg.terrain_mode == "flat":
-        # LeastZDifference: finds horizontal translation that minimises
-        # vertical differences without requiring slope/aspect.
-        # DhMinimize: cleans residual low-frequency vertical trend after
-        # geometric correction. Applied second so it has less to absorb.
-        steps.append(_make_step("LeastZDifference", "ICP"))
+        # Prefer LeastZDifference when available; avoid ICP fallback because
+        # some xdem installs require optional pytransform3d for ICP.
+        try:
+            steps.append(_make_step("LeastZDifference"))
+        except AttributeError:
+            steps.append(_make_step("NuthKaab"))
         steps.append(_make_step("DhMinimize"))
 
     elif cfg.terrain_mode == "sloped":
-        # NuthKaab: analytically solves horizontal + vertical offset via
-        # the aspect-elevation relationship. Requires slope > ~2–3 deg.
         steps.append(_make_step("NuthKaab"))
         if cfg.apply_terrain_bias:
             steps.append(_make_step("TerrainBias"))
@@ -129,7 +128,7 @@ def _build_pipeline(cfg: Config):
     for s in steps[1:]:
         pipeline = pipeline + s
 
-    return pipeline
+    return steps, pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +262,10 @@ def _compute_metrics(residuals_raw: np.ndarray, clip_m: float) -> dict:
     }
 
 
+
+
+def _describe_pipeline_from_steps(steps: list) -> str:
+    return " → ".join(type(s).__name__ for s in steps)
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -289,7 +292,7 @@ def run_coregistration(
     """
 
     pipeline_desc = cfg.describe_pipeline()
-    print(f"  Pipeline: {pipeline_desc}")
+    print(f"  Pipeline (requested): {pipeline_desc}")
 
     # ------------------------------------------------------------------
     # Load if not supplied
@@ -320,7 +323,9 @@ def run_coregistration(
     # ------------------------------------------------------------------
 
     try:
-        pipeline = _build_pipeline(cfg)
+        steps, pipeline = _build_pipeline(cfg)
+        actual_pipeline_desc = _describe_pipeline_from_steps(steps)
+        print(f"  Pipeline (actual): {actual_pipeline_desc}")
 
         pipeline.fit(
             reference_elev=ref_dem,
@@ -333,7 +338,7 @@ def run_coregistration(
     except Exception as exc:
         print(f"  FAILED: {exc}")
         return CoregResult(
-            pipeline_description=pipeline_desc,
+            pipeline_description=actual_pipeline_desc,
             aligned_dem=tba_dem,
             failed=True,
             failure_reason=str(exc),
@@ -410,7 +415,7 @@ def run_coregistration(
             print()
 
     return CoregResult(
-        pipeline_description=pipeline_desc,
+        pipeline_description=actual_pipeline_desc,
         aligned_dem=aligned,
         median=median,
         nmad=nmad,
