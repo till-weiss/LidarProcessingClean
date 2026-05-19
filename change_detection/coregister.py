@@ -42,6 +42,22 @@ def _make_step(*names):
 # ---------------------------------------------------------------------------
 
 @dataclass
+class StepDiagnostic:
+    step_name: str
+    corrected_dem: xdem.DEM
+    residuals: np.ndarray
+    median: float
+    nmad: float
+    std: float
+    mae: float
+    rmse: float
+    n_stable: int
+    aspect_r2: float
+    aspect_bin_centres: np.ndarray = field(default_factory=lambda: np.array([]))
+    aspect_bin_means: np.ndarray = field(default_factory=lambda: np.array([]))
+
+
+@dataclass
 class CoregResult:
     """Aligned DEM plus all evaluation outputs for one AOI."""
 
@@ -83,6 +99,8 @@ class CoregResult:
     # True if the pipeline raised an exception
     failed: bool = False
     failure_reason: str = ""
+
+    step_diagnostics: list[StepDiagnostic] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -338,41 +356,49 @@ def run_coregistration(
             stable_mask = valid_overlap.copy()
 
     # ------------------------------------------------------------------
-    # Build and run pipeline
+    # Build and run pipeline stepwise
     # ------------------------------------------------------------------
 
     actual_pipeline_desc = pipeline_desc
+    step_diagnostics: list[StepDiagnostic] = []
+    aligned = tba_dem
+
+    def _evaluate_step(step_name: str, dem_now: xdem.DEM):
+        residual_dem = dem_now - ref_dem
+        residuals_raw = np.array(residual_dem.data).astype(np.float32)
+        residuals_raw[~np.isfinite(np.array(ref_dem.data)) | ~np.isfinite(np.array(dem_now.data))] = np.nan
+        valid = stable_mask & np.isfinite(residuals_raw)
+        m = _compute_metrics(residuals_raw[valid], cfg.outlier_clip_m) if int(valid.sum()) > 0 else None
+        if m is None:
+            median = nmad = std = mae = rmse = np.nan
+            residuals = np.array([])
+            n_stable_eval = 0
+        else:
+            median, nmad, std, mae, rmse = m['median'], m['nmad'], m['std'], m['mae'], m['rmse']
+            residuals = m['residuals']
+            n_stable_eval = m['n']
+        aspect_diag = _aspect_ddem_diagnostic(residuals_raw, ref_dem, valid)
+        step_diagnostics.append(StepDiagnostic(step_name=step_name, corrected_dem=dem_now, residuals=residuals, median=median, nmad=nmad, std=std, mae=mae, rmse=rmse, n_stable=n_stable_eval, aspect_r2=aspect_diag['sinusoid_r2'], aspect_bin_centres=aspect_diag['bin_centres'], aspect_bin_means=aspect_diag['bin_means']))
+        return residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable_eval, residuals
 
     try:
-        steps, pipeline = _build_pipeline(cfg)
+        steps, _ = _build_pipeline(cfg)
         actual_pipeline_desc = _describe_pipeline_from_steps(steps)
         print(f"  Pipeline (actual): {actual_pipeline_desc}")
 
-        pipeline.fit(
-            reference_elev=ref_dem,
-            to_be_aligned_elev=tba_dem,
-            inlier_mask=stable_mask,
-        )
-
-        aligned = pipeline.apply(tba_dem)
+        _evaluate_step("Raw", aligned)
+        names=[]
+        for step in steps:
+            step.fit(reference_elev=ref_dem, to_be_aligned_elev=aligned, inlier_mask=stable_mask)
+            aligned = step.apply(aligned)
+            names.append(type(step).__name__)
+            _evaluate_step(" + ".join(names), aligned)
 
     except Exception as exc:
         print(f"  FAILED: {exc}")
-        return CoregResult(
-            pipeline_description=actual_pipeline_desc,
-            aligned_dem=tba_dem,
-            failed=True,
-            failure_reason=str(exc),
-        )
+        return CoregResult(pipeline_description=actual_pipeline_desc, aligned_dem=tba_dem, failed=True, failure_reason=str(exc), step_diagnostics=step_diagnostics)
 
-    # ------------------------------------------------------------------
-    # Stable-ground residuals
-    # ------------------------------------------------------------------
-
-    residual_dem = aligned - ref_dem
-    residuals_raw = np.array(residual_dem.data).astype(np.float32)
-    residuals_raw[~np.isfinite(np.array(ref_dem.data)) | ~np.isfinite(np.array(aligned.data))] = np.nan
-    valid = stable_mask & np.isfinite(residuals_raw)
+    residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable, residuals = _evaluate_step("Final", aligned)
 
     n_stable = int(valid.sum())
 
@@ -422,10 +448,6 @@ def run_coregistration(
     # ------------------------------------------------------------------
 
     print("  Computing aspect-dDEM diagnostic...")
-    aspect_diag = _aspect_ddem_diagnostic(
-        residuals_raw, ref_dem, valid
-    )
-
     r2 = aspect_diag["sinusoid_r2"]
     if not np.isnan(r2):
         print(f"  Aspect sinusoid R² = {r2:.3f}", end="")
@@ -452,6 +474,7 @@ def run_coregistration(
         sinusoid_r2=aspect_diag["sinusoid_r2"],
         flagged=flagged,
         flag_reason="; ".join(flag_reasons),
+        step_diagnostics=step_diagnostics,
     )
 
 

@@ -20,6 +20,7 @@ import pandas as pd
 
 from config import Config
 from coregister import CoregResult
+from diagnostics import save_stepwise_diagnostics
 from change import ChangeResult
 
 
@@ -343,6 +344,21 @@ def save_summary_csv(
 
     coreg_df = pd.DataFrame(coreg_rows)
 
+    step_rows = []
+    best = coreg_results[best_name]
+    for d in best.step_diagnostics:
+        step_rows.append({
+            "step": d.step_name,
+            "median_m": round(d.median, 4) if not np.isnan(d.median) else "",
+            "nmad_m": round(d.nmad, 4) if not np.isnan(d.nmad) else "",
+            "std_m": round(d.std, 4) if not np.isnan(d.std) else "",
+            "mae_m": round(d.mae, 4) if not np.isnan(d.mae) else "",
+            "rmse_m": round(d.rmse, 4) if not np.isnan(d.rmse) else "",
+            "n_stable": d.n_stable,
+            "aspect_r2": round(d.aspect_r2, 4) if not np.isnan(d.aspect_r2) else "",
+        })
+    step_df = pd.DataFrame(step_rows)
+
     # --- Change statistics table ---
     change_rows = [{
         "metric":  k,
@@ -434,5 +450,8 @@ def save_report(
     plot_ddem_map(change, cfg)
     plot_ddem_histogram(change, cfg)
     save_summary_csv(coreg_results, change, cfg)
+    import xdem
+    ref_dem = xdem.DEM(cfg.dem_reference_path)
+    save_stepwise_diagnostics(best, ref_dem, cfg)
     save_rasters(coreg_results, change, cfg)
     print("--- Report complete ---\n")
