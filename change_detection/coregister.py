@@ -44,6 +44,7 @@ def _make_step(*names):
 @dataclass
 class StepDiagnostic:
     step_name: str
+    pipeline_description: str
     corrected_dem: xdem.DEM
     residuals: np.ndarray
     median: float
@@ -363,7 +364,7 @@ def run_coregistration(
     step_diagnostics: list[StepDiagnostic] = []
     aligned = tba_dem
 
-    def _evaluate_step(step_name: str, dem_now: xdem.DEM):
+    def _evaluate_step(step_name: str, pipeline_name: str, dem_now: xdem.DEM):
         residual_dem = dem_now - ref_dem
         residuals_raw = np.array(residual_dem.data).astype(np.float32)
         residuals_raw[~np.isfinite(np.array(ref_dem.data)) | ~np.isfinite(np.array(dem_now.data))] = np.nan
@@ -378,7 +379,7 @@ def run_coregistration(
             residuals = m['residuals']
             n_stable_eval = m['n']
         aspect_diag = _aspect_ddem_diagnostic(residuals_raw, ref_dem, valid)
-        step_diagnostics.append(StepDiagnostic(step_name=step_name, corrected_dem=dem_now, residuals=residuals, median=median, nmad=nmad, std=std, mae=mae, rmse=rmse, n_stable=n_stable_eval, aspect_r2=aspect_diag['sinusoid_r2'], aspect_bin_centres=aspect_diag['bin_centres'], aspect_bin_means=aspect_diag['bin_means']))
+        step_diagnostics.append(StepDiagnostic(step_name=step_name, pipeline_description=pipeline_name, corrected_dem=dem_now, residuals=residuals, median=median, nmad=nmad, std=std, mae=mae, rmse=rmse, n_stable=n_stable_eval, aspect_r2=aspect_diag['sinusoid_r2'], aspect_bin_centres=aspect_diag['bin_centres'], aspect_bin_means=aspect_diag['bin_means']))
         return residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable_eval, residuals
 
     try:
@@ -386,19 +387,22 @@ def run_coregistration(
         actual_pipeline_desc = _describe_pipeline_from_steps(steps)
         print(f"  Pipeline (actual): {actual_pipeline_desc}")
 
-        _evaluate_step("Raw", aligned)
+        residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable, residuals = _evaluate_step("Raw", "Raw DEM", aligned)
         names=[]
         for step in steps:
             step.fit(reference_elev=ref_dem, to_be_aligned_elev=aligned, inlier_mask=stable_mask)
             aligned = step.apply(aligned)
             names.append(type(step).__name__)
-            _evaluate_step(" + ".join(names), aligned)
+            pipeline_name = " → ".join(names)
+            residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable, residuals = _evaluate_step(
+                f"{len(names)}",
+                pipeline_name,
+                aligned,
+            )
 
     except Exception as exc:
         print(f"  FAILED: {exc}")
         return CoregResult(pipeline_description=actual_pipeline_desc, aligned_dem=tba_dem, failed=True, failure_reason=str(exc), step_diagnostics=step_diagnostics)
-
-    residuals_raw, valid, aspect_diag, median, nmad, std, mae, rmse, n_stable, residuals = _evaluate_step("Final", aligned)
 
     n_stable = int(valid.sum())
 

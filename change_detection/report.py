@@ -20,7 +20,7 @@ import pandas as pd
 
 from config import Config
 from coregister import CoregResult
-from diagnostics import save_stepwise_diagnostics
+from diagnostics import stepwise_table, save_stepwise_evolution_csv, save_final_coreg_diagnostic_plots
 from change import ChangeResult
 
 
@@ -322,42 +322,9 @@ def save_summary_csv(
     """
 
     coreg_results = _as_result_map(coreg_results)
-    # --- Co-registration table ---
-    coreg_rows = []
     best_name = coreg_results["_best"]
-
-    for name, r in coreg_results.items():
-        if name == "_best":
-            continue
-        coreg_rows.append({
-            "method":   name,
-            "failed":   r.failed,
-            "failure":  r.failure_reason,
-            "median_m": round(r.median, 4) if not np.isnan(r.median) else "",
-            "nmad_m":   round(r.nmad,   4) if not np.isnan(r.nmad)   else "",
-            "std_m":    round(r.std,    4) if not np.isnan(r.std)    else "",
-            "mae_m":    round(r.mae,    4) if not np.isnan(r.mae)    else "",
-            "rmse_m":   round(r.rmse,   4) if not np.isnan(r.rmse)   else "",
-            "n_stable": r.n_stable,
-            "best":     name == best_name,
-        })
-
-    coreg_df = pd.DataFrame(coreg_rows)
-
-    step_rows = []
     best = coreg_results[best_name]
-    for d in best.step_diagnostics:
-        step_rows.append({
-            "step": d.step_name,
-            "median_m": round(d.median, 4) if not np.isnan(d.median) else "",
-            "nmad_m": round(d.nmad, 4) if not np.isnan(d.nmad) else "",
-            "std_m": round(d.std, 4) if not np.isnan(d.std) else "",
-            "mae_m": round(d.mae, 4) if not np.isnan(d.mae) else "",
-            "rmse_m": round(d.rmse, 4) if not np.isnan(d.rmse) else "",
-            "n_stable": d.n_stable,
-            "aspect_r2": round(d.aspect_r2, 4) if not np.isnan(d.aspect_r2) else "",
-        })
-    step_df = pd.DataFrame(step_rows)
+    step_df = stepwise_table(best)
 
     # --- Change statistics table ---
     change_rows = [{
@@ -389,8 +356,21 @@ def save_summary_csv(
     out = cfg.output_path(filename)
 
     with open(out, "w") as f:
-        f.write("# Co-registration results\n")
-        coreg_df.to_csv(f, index=False)
+        f.write("# Co-registration stepwise evolution\n")
+        step_df.to_csv(f, index=False)
+        f.write("\n# Final co-registration summary\n")
+        pd.DataFrame([{
+            "pipeline": best.pipeline_description,
+            "median_m": round(best.median, 4) if np.isfinite(best.median) else "",
+            "nmad_m": round(best.nmad, 4) if np.isfinite(best.nmad) else "",
+            "std_m": round(best.std, 4) if np.isfinite(best.std) else "",
+            "mae_m": round(best.mae, 4) if np.isfinite(best.mae) else "",
+            "rmse_m": round(best.rmse, 4) if np.isfinite(best.rmse) else "",
+            "n_stable": best.n_stable,
+            "aspect_r2": round(best.sinusoid_r2, 4) if np.isfinite(best.sinusoid_r2) else "",
+            "failed": best.failed,
+            "failure": best.failure_reason,
+        }]).to_csv(f, index=False)
         f.write("\n# Change statistics\n")
         change_df.to_csv(f, index=False)
 
@@ -452,6 +432,7 @@ def save_report(
     save_summary_csv(coreg_results, change, cfg)
     import xdem
     ref_dem = xdem.DEM(cfg.dem_reference_path)
-    save_stepwise_diagnostics(best, ref_dem, cfg)
+    save_stepwise_evolution_csv(best, cfg)
+    save_final_coreg_diagnostic_plots(best, ref_dem, cfg)
     save_rasters(coreg_results, change, cfg)
     print("--- Report complete ---\n")
