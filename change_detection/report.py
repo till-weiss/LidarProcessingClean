@@ -1,423 +1,82 @@
-"""
-report.py
----------
-Produces all output files: plots, summary CSV, and aligned/dDEM GeoTIFFs.
-
-This module only writes — it does not compute metrics.
-All inputs come from the structured results produced by coregister.py
-and change.py, so you can re-run plots without re-running ICP.
-"""
-
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Optional
-
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import pandas as pd
-
-from config import Config
-from coregister import CoregResult
-from change import ChangeResult
+import matplotlib.pyplot as plt
 
 
-# ---------------------------------------------------------------------------
-# Helper: shared figure style
-# ---------------------------------------------------------------------------
+def _hex_scatter(ax, x, y, title):
+    hb = ax.hexbin(x, y, gridsize=110, bins="log", mincnt=1, cmap="viridis")
+    line_min = np.nanpercentile(np.r_[x, y], 1)
+    line_max = np.nanpercentile(np.r_[x, y], 99)
+    ax.plot([line_min, line_max], [line_min, line_max], "r--", lw=1.2)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("Reference elevation [m]")
+    ax.set_ylabel("Target elevation [m]")
+    return hb
 
-def _apply_style(ax, title: str = "", xlabel: str = "", ylabel: str = ""):
-    ax.set_title(title, fontsize=11, pad=8)
-    ax.set_xlabel(xlabel, fontsize=9)
-    ax.set_ylabel(ylabel, fontsize=9)
-    ax.tick_params(labelsize=8)
-    ax.spines[["top", "right"]].set_visible(False)
 
+def save_outputs(cfg, coreg_data, change_data):
+    print("\n[3/3] Save rasters, CSV, and diagnostics")
+    ref_arr = np.array(coreg_data["reference_dem"].data).astype(np.float32)
+    tgt_arr = np.array(coreg_data["target_coreg"].data).astype(np.float32)
+    stable = coreg_data["stable_mask"]
+    ddem = change_data["ddem"]
+    ddem_arr = change_data["ddem_arr"]
+    stats = change_data["change_stats"]
 
-# ---------------------------------------------------------------------------
-# 1. Co-registration comparison histogram
-# ---------------------------------------------------------------------------
+    coreg_data["target_coreg"].save(str(cfg.corrected_target_tif))
+    ddem.save(str(cfg.ddem_tif))
 
-def plot_coreg_histograms(
-    coreg_results: dict[str, CoregResult],
-    cfg: Config,
-    filename: str = "coreg_comparison.png",
-) -> Path:
-    """
-    Overlapping residual histograms for all successful methods,
-    annotated with NMAD. Best method drawn on top with full opacity.
-    """
+    rows = [
+        {"metric": "aoi_name", "value": cfg.aoi_name},
+        {"metric": "dem_type", "value": cfg.dem_type},
+        {"metric": "years", "value": f"{cfg.ref_year}-{cfg.target_year}"},
+    ]
+    rows += [{"metric": k, "value": v} for k, v in stats.items()]
+    rows += [{"metric": f"coreg_{k}", "value": v} for k, v in coreg_data["stable_stats"].items()]
+    pd.DataFrame(rows).to_csv(cfg.summary_csv, index=False)
 
-    successful = {
-        k: v for k, v in coreg_results.items()
-        if k != "_best" and not v.failed and len(v.residuals) > 0
-    }
+    valid = np.isfinite(ref_arr) & np.isfinite(tgt_arr)
+    valid_stable = valid & stable
 
-    if not successful:
-        raise RuntimeError("No successful co-registration results to plot.")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), constrained_layout=True)
+    hb1 = _hex_scatter(axes[0, 0], ref_arr[valid], tgt_arr[valid], "All pixels")
+    fig.colorbar(hb1, ax=axes[0, 0], label="log10(N)")
+    hb2 = _hex_scatter(axes[0, 1], ref_arr[valid_stable], tgt_arr[valid_stable], "Stable-ground pixels")
+    fig.colorbar(hb2, ax=axes[0, 1], label="log10(N)")
 
-    best_name = coreg_results["_best"]
+    axes[1, 0].hist(ddem_arr[np.isfinite(ddem_arr)], bins=220, color="grey", alpha=0.8)
+    axes[1, 0].axvline(0, color="k", ls="--", lw=1)
+    axes[1, 0].set_title(f"d{cfg.dem_type} distribution (all pixels)")
+    axes[1, 0].set_xlabel("Elevation change [m]")
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+    stable_ddem = ddem_arr[valid_stable]
+    axes[1, 1].hist(stable_ddem, bins=180, color="steelblue", alpha=0.85)
+    axes[1, 1].axvline(0, color="k", ls="--", lw=1)
+    axes[1, 1].set_title("dDEM on stable ground")
+    axes[1, 1].set_xlabel("Elevation change [m]")
 
-    # Draw non-best methods first (lower alpha)
-    for name, result in successful.items():
-        if name == best_name:
-            continue
-        ax.hist(
-            result.residuals,
-            bins=200,
-            alpha=0.25,
-            density=True,
-            label=f"{name}  NMAD={result.nmad:.3f} m",
-        )
-
-    # Draw best method on top
-    best = successful[best_name]
-    ax.hist(
-        best.residuals,
-        bins=200,
-        alpha=0.75,
-        density=True,
-        color="steelblue",
-        label=f"{best_name}  NMAD={best.nmad:.3f} m  ★ best",
-        zorder=5,
+    stats_txt = (
+        f"Stable median: {stats['stable_median']:+.3f} m\n"
+        f"Stable NMAD: {stats['stable_nmad']:.3f} m\n"
+        f"Stable STD: {stats['stable_std']:.3f} m\n"
+        f"Stable RMSE: {stats['stable_rmse']:.3f} m"
     )
+    axes[1, 1].text(0.98, 0.97, stats_txt, transform=axes[1, 1].transAxes, ha="right", va="top", fontsize=9,
+                    bbox=dict(facecolor="white", alpha=0.75, edgecolor="0.7"))
 
-    ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlim(-1.5, 1.5)
-
-    _apply_style(
-        ax,
-        title="Co-registration residuals on stable ground",
-        xlabel="Residual (aligned − reference)  [m]",
-        ylabel="Density",
-    )
-
-    ax.legend(fontsize=7, ncol=2)
-    fig.tight_layout()
-
-    out = cfg.output_path(filename)
-    fig.savefig(out, dpi=200)
+    fig.suptitle(f"{cfg.aoi_name} {cfg.dem_type}: DEM agreement {cfg.ref_year} vs {cfg.target_year}", fontsize=13)
+    fig.savefig(cfg.agreement_png, dpi=220)
     plt.close(fig)
-    print(f"  Saved: {out}")
-    return out
 
-
-# ---------------------------------------------------------------------------
-# 2. Residual map of best method
-# ---------------------------------------------------------------------------
-
-def plot_residual_map(
-    coreg_results: dict[str, CoregResult],
-    cfg: Config,
-    filename: str = "residual_map_best.png",
-    vrange: float = 0.5,
-) -> Path:
-    """
-    Spatial map of stable-ground residuals for the best co-registration method.
-    """
-
-    import xdem
-
-    best_name = coreg_results["_best"]
-    best: CoregResult = coreg_results[best_name]
-
-    ref_dem = xdem.DEM(cfg.dem_reference_path)
-    residual_dem = best.aligned_dem - ref_dem
-    residual_arr = np.array(residual_dem.data).astype(np.float32)
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-
-    im = ax.imshow(
-        residual_arr,
-        cmap="RdBu_r",
-        vmin=-vrange,
-        vmax=vrange,
-        interpolation="nearest",
-    )
-
-    plt.colorbar(im, ax=ax, label="Residual [m]", shrink=0.7)
-
-    _apply_style(
-        ax,
-        title=f"Residual map — {best_name}  (NMAD = {best.nmad:.3f} m)",
-    )
-
-    fig.tight_layout()
-    out = cfg.output_path(filename)
-    fig.savefig(out, dpi=200)
-    plt.close(fig)
-    print(f"  Saved: {out}")
-    return out
-
-
-# ---------------------------------------------------------------------------
-# 3. dDEM map
-# ---------------------------------------------------------------------------
-
-def plot_ddem_map(
-    change: ChangeResult,
-    cfg: Config,
-    filename: str = "ddem_map.png",
-    vrange: Optional[float] = None,
-) -> Path:
-    """
-    Spatial map of the dDEM. Diverging colormap centred on zero.
-    Pixels below the change threshold are shown in a muted neutral tone
-    to visually separate noise from real change.
-    """
-
-    ddem_arr = np.array(change.ddem.data).astype(np.float32)
-
-    # Auto-range: 95th percentile of absolute values
-    if vrange is None:
-        vrange = float(np.nanpercentile(np.abs(ddem_arr[np.isfinite(ddem_arr)]), 95))
-        vrange = max(vrange, 0.05)    # floor to avoid degenerate colorbars
-
-    # Build a masked version that greys out sub-threshold pixels
-    display = ddem_arr.copy()
-    below_threshold = np.abs(display) < change.threshold_m
-    display[below_threshold] = np.nan   # will render as "bad" color in colormap
-
-    cmap = plt.get_cmap("RdBu_r").copy()
-    cmap.set_bad(color="#d0d0d0")       # grey for sub-threshold
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-
-    im = ax.imshow(
-        display,
-        cmap=cmap,
-        vmin=-vrange,
-        vmax=vrange,
-        interpolation="nearest",
-    )
-
-    cbar = plt.colorbar(im, ax=ax, label="Elevation change [m]", shrink=0.7)
-
-    _apply_style(
-        ax,
-        title=(
-            f"dDEM  (threshold ±{change.threshold_m:.3f} m  "
-            f"| subsidence={change.subsidence_n_pixels} px  "
-            f"heave={change.heave_n_pixels} px)"
-        ),
-    )
-
-    # Annotate stats
-    stats_text = (
-        f"median  {change.aoi_median:+.3f} m\n"
-        f"NMAD    {change.aoi_nmad:.3f} m\n"
-        f"changed {change.aoi_change_fraction:.1%}"
-    )
-    ax.text(
-        0.02, 0.97, stats_text,
-        transform=ax.transAxes,
-        fontsize=8,
-        va="top", ha="left",
-        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-    )
-
-    fig.tight_layout()
-    out = cfg.output_path(filename)
-    fig.savefig(out, dpi=200)
-    plt.close(fig)
-    print(f"  Saved: {out}")
-    return out
-
-
-# ---------------------------------------------------------------------------
-# 4. dDEM histogram
-# ---------------------------------------------------------------------------
-
-def plot_ddem_histogram(
-    change: ChangeResult,
-    cfg: Config,
-    filename: str = "ddem_histogram.png",
-) -> Path:
-    """
-    Histogram of dDEM values with vertical lines marking the change threshold
-    and the median. Subsidence and heave tails are shaded.
-    """
-
-    ddem_arr = np.array(change.ddem.data).astype(np.float32)
-    vals = ddem_arr[np.isfinite(ddem_arr)]
-
-    # Clip for display (5th–95th percentile range)
-    lo = float(np.nanpercentile(vals, 1))
-    hi = float(np.nanpercentile(vals, 99))
-
-    fig, ax = plt.subplots(figsize=(9, 4))
-
-    n, bins, patches = ax.hist(
-        vals,
-        bins=300,
-        range=(lo, hi),
-        density=True,
-        color="#888888",
-        alpha=0.6,
-        linewidth=0,
-    )
-
-    # Shade tails beyond threshold
-    for patch, left_edge in zip(patches, bins[:-1]):
-        if left_edge < -change.threshold_m:
-            patch.set_facecolor("#4878CF")
-            patch.set_alpha(0.8)
-        elif left_edge > change.threshold_m:
-            patch.set_facecolor("#CF4848")
-            patch.set_alpha(0.8)
-
-    ax.axvline(0, color="black", linewidth=0.8, linestyle="--", label="zero")
-    ax.axvline(
-        change.aoi_median, color="navy", linewidth=1.2, linestyle="-",
-        label=f"median  {change.aoi_median:+.3f} m"
-    )
-    ax.axvline(
-        -change.threshold_m, color="steelblue", linewidth=1.0, linestyle=":",
-        label=f"±threshold  {change.threshold_m:.3f} m"
-    )
-    ax.axvline(change.threshold_m, color="steelblue", linewidth=1.0, linestyle=":")
-
-    _apply_style(
-        ax,
-        title="Distribution of elevation change",
-        xlabel="dDEM  [m]",
-        ylabel="Density",
-    )
-
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-
-    out = cfg.output_path(filename)
-    fig.savefig(out, dpi=200)
-    plt.close(fig)
-    print(f"  Saved: {out}")
-    return out
-
-
-# ---------------------------------------------------------------------------
-# 5. Summary CSV
-# ---------------------------------------------------------------------------
-
-def save_summary_csv(
-    coreg_results: dict[str, CoregResult],
-    change: ChangeResult,
-    cfg: Config,
-    filename: str = "summary.csv",
-) -> Path:
-    """
-    Write a flat CSV with one row per co-registration method plus a
-    separate row block for change statistics.
-    """
-
-    # --- Co-registration table ---
-    coreg_rows = []
-    best_name = coreg_results["_best"]
-
-    for name, r in coreg_results.items():
-        if name == "_best":
-            continue
-        coreg_rows.append({
-            "method":   name,
-            "failed":   r.failed,
-            "failure":  r.failure_reason,
-            "median_m": round(r.median, 4) if not np.isnan(r.median) else "",
-            "nmad_m":   round(r.nmad,   4) if not np.isnan(r.nmad)   else "",
-            "std_m":    round(r.std,    4) if not np.isnan(r.std)    else "",
-            "mae_m":    round(r.mae,    4) if not np.isnan(r.mae)    else "",
-            "rmse_m":   round(r.rmse,   4) if not np.isnan(r.rmse)   else "",
-            "n_stable": r.n_stable,
-            "best":     name == best_name,
-        })
-
-    coreg_df = pd.DataFrame(coreg_rows)
-
-    # --- Change statistics table ---
-    change_rows = [{
-        "metric":  k,
-        "value":   v,
-    } for k, v in {
-        "threshold_m":          round(change.threshold_m, 4),
-        "aoi_mean_m":           round(change.aoi_mean,    4),
-        "aoi_median_m":         round(change.aoi_median,  4),
-        "aoi_nmad_m":           round(change.aoi_nmad,    4),
-        "aoi_std_m":            round(change.aoi_std,     4),
-        "aoi_q683_m":           round(change.aoi_q683,    4),
-        "aoi_q95_m":            round(change.aoi_q95,     4),
-        "aoi_n_pixels":         change.aoi_n_pixels,
-        "aoi_change_fraction":  round(change.aoi_change_fraction, 4),
-        "stable_median_m":      round(change.stable_median, 4) if not np.isnan(change.stable_median) else "",
-        "stable_nmad_m":        round(change.stable_nmad,   4) if not np.isnan(change.stable_nmad)   else "",
-        "stable_n_pixels":      change.stable_n_pixels,
-        "subsidence_mean_m":    round(change.subsidence_mean_m, 4) if not np.isnan(change.subsidence_mean_m) else "",
-        "subsidence_n_pixels":  change.subsidence_n_pixels,
-        "heave_mean_m":         round(change.heave_mean_m, 4) if not np.isnan(change.heave_mean_m) else "",
-        "heave_n_pixels":       change.heave_n_pixels,
-        "volume_loss_m3":       round(change.volume_loss_m3, 1) if change.volume_loss_m3 is not None else "",
-        "volume_gain_m3":       round(change.volume_gain_m3, 1) if change.volume_gain_m3 is not None else "",
-    }.items()]
-
-    change_df = pd.DataFrame(change_rows)
-
-    out = cfg.output_path(filename)
-
-    with open(out, "w") as f:
-        f.write("# Co-registration results\n")
-        coreg_df.to_csv(f, index=False)
-        f.write("\n# Change statistics\n")
-        change_df.to_csv(f, index=False)
-
-    print(f"  Saved: {out}")
-    return out
-
-
-# ---------------------------------------------------------------------------
-# 6. Save aligned DEM and dDEM as GeoTIFFs
-# ---------------------------------------------------------------------------
-
-def save_rasters(
-    coreg_results: dict[str, CoregResult],
-    change: ChangeResult,
-    cfg: Config,
-) -> tuple[Path, Path]:
-    """Save the best-aligned DEM and the dDEM as GeoTIFFs."""
-
-    from coregister import best_result
-
-    best = best_result(coreg_results)
-
-    aligned_path = cfg.output_path("aligned_best.tif")
-    best.aligned_dem.save(str(aligned_path))
-    print(f"  Saved: {aligned_path}")
-
-    ddem_path = cfg.output_path("ddem.tif")
-    change.ddem.save(str(ddem_path))
-    print(f"  Saved: {ddem_path}")
-
-    return aligned_path, ddem_path
-
-
-# ---------------------------------------------------------------------------
-# Convenience: run all outputs at once
-# ---------------------------------------------------------------------------
-
-def save_report(
-    coreg_results: dict[str, CoregResult],
-    change: ChangeResult,
-    cfg: Config,
-) -> None:
-    """
-    Generate all standard outputs in one call.
-    Individual functions can still be called separately for custom workflows.
-    """
-
-    print("\n--- Saving report ---")
-    plot_coreg_histograms(coreg_results, cfg)
-    plot_residual_map(coreg_results, cfg)
-    plot_ddem_map(change, cfg)
-    plot_ddem_histogram(change, cfg)
-    save_summary_csv(coreg_results, change, cfg)
-    save_rasters(coreg_results, change, cfg)
-    print("--- Report complete ---\n")
+    fig2, ax2 = plt.subplots(1, 2, figsize=(11, 4.2), constrained_layout=True)
+    ax2[0].hist(ddem_arr[np.isfinite(ddem_arr)], bins=260, density=True, color="0.4")
+    ax2[0].set_title("All pixels")
+    ax2[0].set_xlabel(f"d{cfg.dem_type} [m]")
+    ax2[1].hist(stable_ddem, bins=220, density=True, color="teal")
+    ax2[1].set_title("Stable ground")
+    ax2[1].set_xlabel(f"d{cfg.dem_type} [m]")
+    for a in ax2:
+        a.axvline(0, color="k", lw=1, ls="--")
+    fig2.suptitle(f"{cfg.aoi_name} {cfg.dem_type} {cfg.ref_year}-{cfg.target_year} distribution")
+    fig2.savefig(cfg.distribution_png, dpi=220)
+    plt.close(fig2)

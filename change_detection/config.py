@@ -1,198 +1,53 @@
+from dataclasses import dataclass
 from pathlib import Path
-import rasterio
-import numpy as np
-
 
 # -------------------------------------------------
-# CONFIG
+# Central settings for one change-detection run
 # -------------------------------------------------
 
-reference_dem = "data/reference_dem.tif"
-target_dem = "data/target_dem.tif"
-
-stable_mask = "data/stable_mask.tif"
-
-output_dir = "results"
-
-terrain_mode = "flat"   # "flat" or "sloped"
-
-
-# -------------------------------------------------
-# PIPELINE
-# -------------------------------------------------
-
-class CoregistrationPipeline:
-
-    def __init__(
-        self,
-        reference_dem,
-        target_dem,
-        stable_mask=None,
-        output_dir="output",
-        terrain_mode="flat",
-    ):
-
-        self.reference_dem = Path(reference_dem)
-        self.target_dem = Path(target_dem)
-
-        self.stable_mask = (
-            Path(stable_mask)
-            if stable_mask is not None
-            else None
-        )
-
-        self.output_dir = Path(output_dir)
-
-        self.terrain_mode = terrain_mode
-
-        self.output_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-    # -------------------------------------------------
-
-    def load_raster(self, path):
-
-        with rasterio.open(path) as src:
-
-            data = src.read(1)
-            profile = src.profile
-
-        return data, profile
-
-    # -------------------------------------------------
-
-    def load_inputs(self):
-
-        self.ref, self.ref_profile = self.load_raster(
-            self.reference_dem
-        )
-
-        self.tgt, self.tgt_profile = self.load_raster(
-            self.target_dem
-        )
-
-        if self.stable_mask is not None:
-
-            self.mask, _ = self.load_raster(
-                self.stable_mask
-            )
-
-    # -------------------------------------------------
-
-    def compute_dh(self):
-
-        self.dh = self.tgt - self.ref
-
-    # -------------------------------------------------
-
-    def apply_stable_mask(self):
-
-        if self.stable_mask is None:
-
-            self.stable_dh = self.dh[np.isfinite(self.dh)]
-
-            return
-
-        stable = self.mask > 0
-
-        self.stable_dh = self.dh[stable]
-
-    # -------------------------------------------------
-
-    def estimate_vertical_shift(self):
-
-        self.vertical_shift = np.nanmedian(
-            self.stable_dh
-        )
-
-    # -------------------------------------------------
-
-    def correct_target(self):
-
-        self.corrected = (
-            self.tgt - self.vertical_shift
-        )
-
-    # -------------------------------------------------
-
-    def save_corrected_dem(self):
-
-        out_path = (
-            self.output_dir / "target_corrected.tif"
-        )
-
-        profile = self.tgt_profile.copy()
-
-        profile.update(dtype="float32")
-
-        with rasterio.open(
-            out_path,
-            "w",
-            **profile
-        ) as dst:
-
-            dst.write(
-                self.corrected.astype(np.float32),
-                1,
-            )
-
-        print(f"Saved corrected DEM: {out_path}")
-
-    # -------------------------------------------------
-
-    def run(self):
-
-        print("Loading inputs...")
-        self.load_inputs()
-
-        print("Computing elevation differences...")
-        self.compute_dh()
-
-        if self.terrain_mode == "flat":
-
-            print("Applying stable terrain mask...")
-            self.apply_stable_mask()
-
-        elif self.terrain_mode == "sloped":
-
-            print("Using all terrain")
-            self.stable_dh = self.dh[np.isfinite(self.dh)]
-
-        else:
-
-            raise ValueError(
-                f"Unknown terrain_mode: {self.terrain_mode}"
-            )
-
-        print("Estimating vertical bias...")
-        self.estimate_vertical_shift()
-
-        print(
-            f"Estimated vertical shift: "
-            f"{self.vertical_shift:.3f} m"
-        )
-
-        print("Correcting target DEM...")
-        self.correct_target()
-
-        print("Saving result...")
-        self.save_corrected_dem()
-
-
-# -------------------------------------------------
-# RUN
-# -------------------------------------------------
-
-if __name__ == "__main__":
-
-    pipeline = CoregistrationPipeline(
-        reference_dem=reference_dem,
-        target_dem=target_dem,
-        stable_mask=stable_mask,
-        output_dir=output_dir,
-        terrain_mode=terrain_mode,
-    )
-
-    pipeline.run()
+AOI_NAME = "FortMcPherson"
+DEM_TYPE = "DTM"   # "DTM" or "DSM"
+REF_YEAR = 2023
+TARGET_YEAR = 2025
+
+DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/FortMcPherson_2023/DTM/WC_FortMcPherson_20250803_15cm_01_DTM_2m.tif"
+DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/FortMcPherson_2025/DTM/WC_FortMcPherson_20250803_15cm_01_DTM_2m.tif"
+STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/FortMcPherson_Reference.gpkg"
+OUTPUT_DIR = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/change_detection"
+
+
+@dataclass
+class ChangeDetectionConfig:
+    aoi_name: str = AOI_NAME
+    dem_type: str = DEM_TYPE
+    ref_year: int = REF_YEAR
+    target_year: int = TARGET_YEAR
+
+    dem_reference_path: str = DEM_REFERENCE_PATH
+    dem_target_path: str = DEM_TARGET_PATH
+    stable_ground_path: str | None = STABLE_GROUND_PATH
+    output_root: str = OUTPUT_DIR
+
+    outlier_clip_m: float = 10.0
+    change_threshold_m: float | None = None
+
+    def __post_init__(self):
+        self.dem_type = self.dem_type.upper()
+        if self.dem_type not in {"DTM", "DSM"}:
+            raise ValueError("DEM_TYPE must be 'DTM' or 'DSM'")
+
+        self.output_dir = Path(self.output_root) / self.aoi_name / self.dem_type / f"{self.ref_year}_{self.target_year}"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = f"{self.aoi_name}_{self.dem_type}_{self.ref_year}_{self.target_year}"
+        self.file_stem = stem
+
+        self.corrected_target_tif = self.output_dir / f"{stem}_target_coreg.tif"
+        self.ddem_tif = self.output_dir / f"{stem}_ddem.tif"
+        self.summary_csv = self.output_dir / f"{stem}_summary.csv"
+        self.agreement_png = self.output_dir / f"{stem}_agreement.png"
+        self.distribution_png = self.output_dir / f"{stem}_distribution.png"
+
+
+def get_config() -> ChangeDetectionConfig:
+    return ChangeDetectionConfig()
