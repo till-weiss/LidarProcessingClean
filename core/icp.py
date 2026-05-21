@@ -206,6 +206,7 @@ def run_pair_icp(
     relative_shift_norm = float(np.linalg.norm(relative_shift_xyz))
 
     log_entry = {
+        "stage": "pair_icp_registration",
         "timestamp_utc": datetime.utcnow().isoformat() + "Z",
         "source_file": source_file,
         "target_file": target_file,
@@ -390,6 +391,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         [
             f for f in processed_strip_files
             if "_aligned" not in os.path.splitext(os.path.basename(f))[0]
+            and "_fixed" not in os.path.splitext(os.path.basename(f))[0]
         ],
         key=extract_start_timestamp
     )
@@ -439,6 +441,17 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     # Build ICP-ready versions and cache point clouds / simple footprints
     # ------------------------------------------------------------------
     strip_info = {}
+    overlap_debug = {
+        "stage": "overlap_debug",
+        "accepted_seed": None,
+        "detected_overlaps": [],
+        "rejected_overlaps": [],
+        "graph_edges": [],
+        "graph_nodes_entered": [],
+        "graph_nodes_left_unresolved": [],
+        "connected_components_count": 0,
+        "cluster_membership_before_export": {},
+    }
 
     for strip in ordered:
         strip_base = os.path.splitext(os.path.basename(strip))[0]
@@ -486,6 +499,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 "footprint": footprint,
                 "area": footprint.area,
             }
+            overlap_debug["graph_nodes_entered"].append(os.path.basename(strip))
 
         except Exception as e:
             print(f"[ICP] Warning: failed to prepare strip {os.path.basename(strip)}: {e}")
@@ -565,6 +579,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
     # ------------------------------------------------------------------
     initial_seed = max(valid_ordered, key=lambda s: strip_info[s]["area"])
     print(f"[ICP] Initial seed selected by largest footprint: {os.path.basename(initial_seed)}")
+    overlap_debug["accepted_seed"] = os.path.basename(initial_seed)
 
     accepted_outputs = []
     fallback_outputs = []
@@ -619,10 +634,36 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 overlap_info = compute_pair_overlap(source, ref_output, ref_icp_ready)
 
                 if overlap_info is None:
+                    overlap_debug["rejected_overlaps"].append(
+                        {
+                            "source": os.path.basename(source),
+                            "target": os.path.basename(ref_output),
+                            "reason": "overlap_evaluation_failed_or_empty_reference",
+                        }
+                    )
                     continue
 
                 if overlap_info["overlap_ratio"] < min_bbox_overlap:
+                    overlap_debug["rejected_overlaps"].append(
+                        {
+                            "source": os.path.basename(source),
+                            "target": os.path.basename(ref_output),
+                            "reason": "overlap_ratio_below_threshold",
+                            "overlap_ratio": float(overlap_info["overlap_ratio"]),
+                            "min_bbox_overlap_ratio": float(min_bbox_overlap),
+                            "overlap_area": float(overlap_info["overlap_area"]),
+                        }
+                    )
                     continue
+
+                overlap_debug["detected_overlaps"].append(
+                    {
+                        "source": os.path.basename(source),
+                        "target": os.path.basename(ref_output),
+                        "overlap_ratio": float(overlap_info["overlap_ratio"]),
+                        "overlap_area": float(overlap_info["overlap_area"]),
+                    }
+                )
 
                 if best_overlap is None:
                     best_ref = ref_output
@@ -646,6 +687,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                     f"{os.path.basename(source)} in pass {pass_idx}; postponing"
                 )
                 next_unresolved.append(source)
+                overlap_debug["graph_nodes_left_unresolved"].append(os.path.basename(source))
                 continue
 
             target_name = os.path.splitext(os.path.basename(best_ref))[0]
@@ -665,6 +707,13 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             if overlap_geom.is_empty:
                 print(f"[ICP] Empty overlap geometry for {pair_id}; postponing")
                 next_unresolved.append(source)
+                overlap_debug["rejected_overlaps"].append(
+                    {
+                        "source": os.path.basename(source),
+                        "target": os.path.basename(best_ref),
+                        "reason": "empty_overlap_geometry_after_intersection",
+                    }
+                )
                 continue
 
             minx, miny, maxx, maxy = overlap_geom.bounds
@@ -693,6 +742,16 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                     f"(src={len(src_ov)}, tgt={len(tgt_ov)})"
                 )
                 next_unresolved.append(source)
+                overlap_debug["rejected_overlaps"].append(
+                    {
+                        "source": os.path.basename(source),
+                        "target": os.path.basename(best_ref),
+                        "reason": "too_few_overlap_points",
+                        "src_overlap_points": int(len(src_ov)),
+                        "tgt_overlap_points": int(len(tgt_ov)),
+                        "min_overlap_points": int(min_overlap_points),
+                    }
+                )
                 continue
 
             start_pair = time.time()
@@ -726,6 +785,15 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             if fitness == 0.0 or (is_identity and rmse == 0.0):
                 print(f"[ICP] ICP returned no valid alignment for {pair_id}; postponing")
                 next_unresolved.append(source)
+                overlap_debug["rejected_overlaps"].append(
+                    {
+                        "source": os.path.basename(source),
+                        "target": os.path.basename(best_ref),
+                        "reason": "invalid_icp_solution_identity_or_zero_fitness",
+                        "fitness": float(fitness),
+                        "rmse": float(rmse),
+                    }
+                )
                 continue
 
             if (
@@ -741,6 +809,18 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                     f"shift={shift:.4f}, shift_xy={shift_xy:.4f}, shift_z={shift_z:.4f}"
                 )
                 next_unresolved.append(source)
+                overlap_debug["rejected_overlaps"].append(
+                    {
+                        "source": os.path.basename(source),
+                        "target": os.path.basename(best_ref),
+                        "reason": "quality_threshold_failed",
+                        "fitness": float(fitness),
+                        "rmse": float(rmse),
+                        "shift_norm": float(shift),
+                        "shift_xy": float(shift_xy),
+                        "shift_z": float(shift_z),
+                    }
+                )
                 continue
 
             transform = icp_result["transform_global"]
@@ -791,6 +871,14 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 ref_cluster_id = cluster_id
 
             cluster_members[ref_cluster_id].append(aligned_source)
+            overlap_debug["graph_edges"].append(
+                {
+                    "source": os.path.basename(source),
+                    "target": os.path.basename(best_ref),
+                    "aligned_output": os.path.basename(aligned_source),
+                    "cluster_id": int(ref_cluster_id),
+                }
+            )
 
             elapsed = time.time() - start_pair
             print(
@@ -868,6 +956,20 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
         print(f"  Cluster {cid}:")
         for m in members:
             print(f"    - {os.path.basename(m)}")
+    overlap_debug["connected_components_count"] = int(sum(1 for _, members in cluster_members.items() if members))
+    overlap_debug["cluster_membership_before_export"] = {
+        str(cid): [os.path.basename(x) for x in members]
+        for cid, members in cluster_members.items()
+    }
+    print(f"[ICP][DEBUG] Overlap candidates detected: {len(overlap_debug['detected_overlaps'])}")
+    print(f"[ICP][DEBUG] Overlap candidates rejected: {len(overlap_debug['rejected_overlaps'])}")
+    print(f"[ICP][DEBUG] Graph edges created: {len(overlap_debug['graph_edges'])}")
+    print(f"[ICP][DEBUG] Connected components: {overlap_debug['connected_components_count']}")
+    if overlap_debug["graph_nodes_left_unresolved"]:
+        print("[ICP][DEBUG] Unresolved graph nodes:")
+        for n in overlap_debug["graph_nodes_left_unresolved"]:
+            print(f"  - {n}")
+    append_icp_log(log_file, overlap_debug)
 
     summary = {
         "stage": "overlap_based_icp_summary",
