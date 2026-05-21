@@ -5,15 +5,16 @@ from pathlib import Path
 # Central settings for one change-detection run
 # -------------------------------------------------
 
-AOI_NAME = "FortMcPherson"
+AOI_NAME = "Tuktoyaktuk"
 DEM_TYPE = "DTM"   # "DTM" or "DSM"
 REF_YEAR = 2023
 TARGET_YEAR = 2025
+COREG_METHOD = "vertical_shift" # or "nuth_kaab"
 
-DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/FortMcPherson_2023/DTM/WC_FortMcPherson_20250803_15cm_01_DTM_2m.tif"
-DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/FortMcPherson_2025/DTM/WC_FortMcPherson_20250803_15cm_01_DTM_2m.tif"
-STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/FortMcPherson_Reference.gpkg"
-OUTPUT_DIR = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/change_detection"
+DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuktoyaktuk_2023/DTM/Tuktoyaktuk_Town_DTM_2m.tif"
+DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuktoyaktuk_2025/DTM/Tuktoyaktuk_Town_DTM_2m.tif"
+STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/Tuk_Airport_Reference.gpkg"
+OUTPUT_DIR = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/ChangeDetection"
 
 
 @dataclass
@@ -22,13 +23,13 @@ class ChangeDetectionConfig:
     dem_type: str = DEM_TYPE
     ref_year: int = REF_YEAR
     target_year: int = TARGET_YEAR
-
+    coreg_method: str = COREG_METHOD
     dem_reference_path: str = DEM_REFERENCE_PATH
     dem_target_path: str = DEM_TARGET_PATH
     stable_ground_path: str | None = STABLE_GROUND_PATH
     output_root: str = OUTPUT_DIR
 
-    outlier_clip_m: float = 10.0
+    outlier_clip_m: float = 100.0
     change_threshold_m: float | None = None
 
     def __post_init__(self):
