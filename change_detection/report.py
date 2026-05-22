@@ -215,18 +215,58 @@ def save_outputs(cfg, coreg_data, change_data):
         },
     ]
 
+        # ---------------------------------------------------------
+    # Coregistration comparison statistics
     # ---------------------------------------------------------
-    # Stable-ground coreg stats
-    # ---------------------------------------------------------
-    rows += [
-        {
-            "metric": f"coreg_{k}",
-            "value": v,
-        }
-        for k, v in coreg_data[
-            "stable_stats"
-        ].items()
-    ]
+
+    comparison = coreg_data.get(
+        "coreg_comparison",
+        {}
+    )
+
+    for (
+        method_name,
+        result,
+    ) in comparison.items():
+
+        method_stats = result[
+            "stats"
+        ]
+
+        rows += [
+            {
+                "metric":
+                    f"{method_name}_median",
+                "value":
+                    method_stats[
+                        "median"
+                    ],
+            },
+            {
+                "metric":
+                    f"{method_name}_nmad",
+                "value":
+                    method_stats[
+                        "nmad"
+                    ],
+            },
+            {
+                "metric":
+                    f"{method_name}_rmse",
+                "value":
+                    method_stats[
+                        "rmse"
+                    ],
+            },
+            {
+                "metric":
+                    f"{method_name}_std",
+                "value":
+                    method_stats[
+                        "std"
+                    ],
+            },
+        ]
 
     pd.DataFrame(rows).to_csv(
         cfg.summary_csv,
@@ -580,3 +620,102 @@ def save_outputs(cfg, coreg_data, change_data):
     )
 
     plt.close(fig2)
+
+        # =========================================================
+    # Figure 3: Coregistration comparison
+    # =========================================================
+
+    comparison = coreg_data.get(
+        "coreg_comparison",
+        {}
+    )
+
+    if len(comparison) > 1:
+
+        methods = []
+        nmads = []
+        rmses = []
+        medians = []
+
+        for (
+            method_name,
+            result,
+        ) in comparison.items():
+
+            methods.append(
+                method_name
+            )
+
+            nmads.append(
+                result["stats"][
+                    "nmad"
+                ]
+            )
+
+            rmses.append(
+                result["stats"][
+                    "rmse"
+                ]
+            )
+
+            medians.append(
+                result["stats"][
+                    "median"
+                ]
+            )
+
+        fig3, ax3 = plt.subplots(
+            figsize=(8, 5)
+        )
+
+        x = np.arange(
+            len(methods)
+        )
+
+        width = 0.28
+
+        ax3.bar(
+            x - width,
+            nmads,
+            width,
+            label="NMAD",
+        )
+
+        ax3.bar(
+            x,
+            rmses,
+            width,
+            label="RMSE",
+        )
+
+        ax3.bar(
+            x + width,
+            medians,
+            width,
+            label="Median",
+        )
+
+        ax3.set_xticks(x)
+
+        ax3.set_xticklabels(
+            methods
+        )
+
+        ax3.set_ylabel(
+            "Error [m]"
+        )
+
+        ax3.set_title(
+            "Co-registration "
+            "method comparison"
+        )
+
+        ax3.legend()
+
+        fig3.savefig(
+            cfg.output_dir
+            / "coreg_comparison.png",
+            dpi=220,
+        )
+
+        plt.close(fig3)

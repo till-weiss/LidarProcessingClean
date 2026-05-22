@@ -5,15 +5,15 @@ from pathlib import Path
 # Central settings for one change-detection run
 # -------------------------------------------------
 
-AOI_NAME = "Tuktoyaktuk"
-DEM_TYPE = "DTM"   # "DTM" or "DSM"
+AOI_NAME = "Inuvik_Airport_rerun"
+DEM_TYPE = "DSM"   # "DTM" or "DSM"
 REF_YEAR = 2023
 TARGET_YEAR = 2025
 COREG_METHOD = "vertical_shift" # or "nuth_kaab"
 
-DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuktoyaktuk_2023/DTM/Tuktoyaktuk_Town_DTM_2m.tif"
-DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuktoyaktuk_2025/DTM/Tuktoyaktuk_Town_DTM_2m.tif"
-STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/Tuk_Airport_Reference.gpkg"
+DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Inuvik_Airport_2023_rerun/DSM/Inuvik_Airport_DSM_2m.tif"
+DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Inuvik_Airport_2025_rerun/DSM/Inuvik_Airport_DSM_2m.tif"
+STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/Inuvik_Airport_Stable_Ground.gpkg"
 OUTPUT_DIR = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/ChangeDetection"
 
 

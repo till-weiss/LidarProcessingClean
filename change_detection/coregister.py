@@ -59,7 +59,84 @@ def co_register_dem_pair(cfg):
         )
 
     # ------------------------------------------------------------------
-    # Co-registration method selection
+    # Co-registration method comparison
+    # ------------------------------------------------------------------
+
+    methods = {
+        "none": None,
+        "vertical_shift": xdem.coreg.VerticalShift(),
+        "nuth_kaab": xdem.coreg.NuthKaab(),
+    }
+
+    comparison_results = {}
+
+    print("\n  Method comparison")
+
+    for method_name, coreg in methods.items():
+
+        print(f"\n  -> {method_name}")
+
+        # --------------------------------------------------------------
+        # Apply method
+        # --------------------------------------------------------------
+
+        if coreg is None:
+
+            target_corrected = target_dem
+
+        else:
+
+            coreg.fit(
+                reference_elev=ref_dem,
+                to_be_aligned_elev=target_dem,
+                inlier_mask=valid_stable,
+            )
+
+            target_corrected = coreg.apply(target_dem)
+
+        # --------------------------------------------------------------
+        # Residual analysis
+        # --------------------------------------------------------------
+
+        residual = np.array(
+            (target_corrected - ref_dem).data
+        ).astype(np.float32)
+
+        stable_vals = residual[valid_stable]
+
+        stable_vals = stable_vals[
+            np.abs(stable_vals) < cfg.outlier_clip_m
+        ]
+
+        if stable_vals.size == 0:
+
+            print("     no valid residuals")
+
+            continue
+
+        stats = {
+            "coreg_method": method_name,
+            "median": float(np.nanmedian(stable_vals)),
+            "nmad": float(gu.stats.nmad(stable_vals)),
+            "std": float(np.nanstd(stable_vals)),
+            "rmse": float(
+                np.sqrt(np.nanmean(stable_vals ** 2))
+            ),
+            "n": int(stable_vals.size),
+        }
+
+        comparison_results[method_name] = {
+            "stats": stats,
+        }
+
+        print(
+            f"     median={stats['median']:+.3f} m | "
+            f"NMAD={stats['nmad']:.3f} m | "
+            f"RMSE={stats['rmse']:.3f} m"
+        )
+
+    # ------------------------------------------------------------------
+    # Final co-registration method
     # ------------------------------------------------------------------
 
     coreg_method = getattr(cfg, "coreg_method", "vertical_shift")
@@ -77,7 +154,7 @@ def co_register_dem_pair(cfg):
             f"Unsupported co-registration method: {coreg_method}"
         )
 
-    print(f"  method: {coreg_name}")
+    print(f"\n  Final method: {coreg_name}")
 
     # ------------------------------------------------------------------
     # Fit co-registration
@@ -138,4 +215,5 @@ def co_register_dem_pair(cfg):
         "stable_stats": stats,
         "coreg_method": coreg_name,
         "coreg_model": coreg,
+        "coreg_comparison": comparison_results,
     }
