@@ -13,6 +13,29 @@ from shapely.geometry import box
 
 from collections import defaultdict
 
+
+def overlap_ratio_from_polygons(poly_a, poly_b):
+    """
+    Symmetric overlap ratio in [0, 1] based on intersection over the smaller footprint.
+
+    This behaves more robustly for strip-like geometries than IoU, because two long
+    partially-overlapping strips can still be good ICP candidates even with a low IoU.
+    """
+    if poly_a is None or poly_b is None:
+        return 0.0
+    if poly_a.is_empty or poly_b.is_empty:
+        return 0.0
+
+    inter = poly_a.intersection(poly_b)
+    if inter.is_empty:
+        return 0.0
+
+    min_area = min(poly_a.area, poly_b.area)
+    if min_area <= 0:
+        return 0.0
+
+    return float(inter.area / min_area)
+
 def extract_start_timestamp(strip_path):
     """Extract acquisition start timestamp from filename, e.g. 20230707T165034."""
     file_name = os.path.basename(strip_path)
@@ -544,6 +567,12 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 overlap_geom = overlap_geom.buffer(overlap_buffer)
 
             overlap_area = 0.0 if overlap_geom.is_empty else overlap_geom.area
+            src_area = float(src_poly.area)
+            ref_area = float(ref_poly.area)
+            iou = 0.0
+            union_area = src_area + ref_area - overlap_area
+            if union_area > 0:
+                iou = float(overlap_area / union_area)
 
             return {
                 "overlap_ratio": overlap_ratio,
@@ -551,6 +580,9 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 "overlap_geom": overlap_geom,
                 "ref_icp_xyz": ref_icp_xyz,
                 "ref_poly": ref_poly,
+                "src_area": src_area,
+                "ref_area": ref_area,
+                "iou": iou,
             }
 
         except Exception as e:
@@ -622,6 +654,13 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                     continue
 
                 if overlap_info["overlap_ratio"] < min_bbox_overlap:
+                    print(
+                        f"[ICP] Reject overlap {os.path.basename(source)} -> "
+                        f"{os.path.basename(ref_output)} | "
+                        f"ratio={overlap_info['overlap_ratio']:.3f} (< {min_bbox_overlap:.3f}) | "
+                        f"iou={overlap_info['iou']:.3f} | "
+                        f"area={overlap_info['overlap_area']:.2f}"
+                    )
                     continue
 
                 if best_overlap is None:
@@ -655,7 +694,8 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
                 f"[ICP] Best reference for {os.path.basename(source)} is "
                 f"{os.path.basename(best_ref)} | "
                 f"overlap_ratio={best_overlap['overlap_ratio']:.3f} | "
-                f"overlap_area={best_overlap['overlap_area']:.2f}"
+                f"overlap_area={best_overlap['overlap_area']:.2f} | "
+                f"iou={best_overlap['iou']:.3f}"
             )
 
             src_icp_full = strip_info[source]["icp_xyz"]
@@ -827,6 +867,7 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             )
 
     fallback_outputs.extend(unresolved)
+    fallback_outputs = list(dict.fromkeys(fallback_outputs))
 
     # ------------------------------------------------------------------
     # Save each cluster individually
@@ -854,8 +895,14 @@ def align_strips_incremental_icp(processed_strip_files, target_fp, config):
             print(f"[ICP] Failed to save cluster {cid}: {e}")
 
     if fallback_outputs:
+        unresolved_unique = list(dict.fromkeys(fallback_outputs))
+        if len(unresolved_unique) != len(fallback_outputs):
+            print(
+                f"[ICP] Note: unresolved list contained duplicates "
+                f"({len(fallback_outputs)} entries -> {len(unresolved_unique)} unique)"
+            )
         print("[ICP] Fallback/unresolved strips:")
-        for strip in fallback_outputs:
+        for strip in unresolved_unique:
             print(f"  - {os.path.basename(strip)}")
 
     if discarded_outputs:
