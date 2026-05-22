@@ -62,7 +62,7 @@ class Configuration:
         # ICP-ready strip creation
         self.icp_use_ground_only = True
         self.icp_min_ground_points = 800
-        self.icp_voxel_size = 1.0
+        self.icp_voxel_size = 2.0
 
         # SMRF ground classification
         self.smrf_window_size = 20.0
@@ -105,7 +105,7 @@ class Configuration:
         self.create_CHM = False
 
         self.fill_gaps = True  # use IDW to close gaps in rasters
-        self.resolution = 1  # pixel size (m). Smaller = sharper/heavier. Rule of thumb: >= sqrt(1 / points_per_m²).
+        self.resolution = 2  # pixel size (m). Smaller = sharper/heavier. Rule of thumb: >= sqrt(1 / points_per_m²).
 
         self.point_density_method = 'density'  # method to determine point density, can be 'sampling' (exact) or 'density' (fast)
 
@@ -149,12 +149,12 @@ class Configuration:
 
         # _______ Processing _______
         self.chunk_size = 5000  # chunk size (m) for main processing. 250–1000 typical. Larger = fewer edges, more memory.
-        self.chunk_overlap = 0.1  # chunk overlap (fraction) for main processing. 0.05–0.3. More reduces seam artifacts.
+        self.chunk_overlap = 0.05  # chunk overlap (fraction) for main processing. 0.05–0.3. More reduces seam artifacts.
         self.num_workers = 8  # parallel workers. <= physical cores/RAM capacity.
 
         # _______ Preprocessing _______
         self.preprocess_chunk_size = 500   # chunk size (m) for preprocessing. Smaller than main = lighter SOR passes.
-        self.preprocess_chunk_overlap = 0.1  # overlap fraction for preprocessing chunks. Reduces SOR edge artefacts.
+        self.preprocess_chunk_overlap = 0.05  # overlap fraction for preprocessing chunks. Reduces SOR edge artefacts.
         self.preprocess_reproject_vertical = False  # If True, convert vertical datum during preprocessing.
         self.preprocess_vertical_target_epsg = 3855  # Target vertical EPSG (EGM2008). Used only when preprocess_reproject_vertical is True.
 
