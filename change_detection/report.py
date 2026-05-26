@@ -621,7 +621,7 @@ def save_outputs(cfg, coreg_data, change_data):
 
     plt.close(fig2)
 
-        # =========================================================
+    # =========================================================
     # Figure 3: Coregistration comparison
     # =========================================================
 
@@ -633,9 +633,7 @@ def save_outputs(cfg, coreg_data, change_data):
     if len(comparison) > 1:
 
         methods = []
-        nmads = []
-        rmses = []
-        medians = []
+        residual_lists = []
 
         for (
             method_name,
@@ -646,76 +644,159 @@ def save_outputs(cfg, coreg_data, change_data):
                 method_name
             )
 
-            nmads.append(
-                result["stats"][
-                    "nmad"
-                ]
-            )
+            residuals = result[
+                "residuals"
+            ]
 
-            rmses.append(
-                result["stats"][
-                    "rmse"
-                ]
-            )
+            residuals = residuals[
+                np.isfinite(residuals)
+            ]
 
-            medians.append(
-                result["stats"][
-                    "median"
-                ]
+            residual_lists.append(
+                residuals
             )
 
         fig3, ax3 = plt.subplots(
-            figsize=(8, 5)
+            figsize=(9, 5.5)
         )
 
-        x = np.arange(
-            len(methods)
+        # -----------------------------------------------------
+        # Violin plots
+        # -----------------------------------------------------
+        violin = ax3.violinplot(
+            residual_lists,
+            showmeans=False,
+            showmedians=True,
+            showextrema=False,
         )
 
-        width = 0.28
+        # Slight transparency
+        for body in violin["bodies"]:
+            body.set_alpha(0.5)
 
-        ax3.bar(
-            x - width,
-            nmads,
-            width,
-            label="NMAD",
+        # -----------------------------------------------------
+        # Boxplots overlay
+        # -----------------------------------------------------
+        ax3.boxplot(
+            residual_lists,
+            widths=0.18,
+            showfliers=False,
         )
 
-        ax3.bar(
-            x,
-            rmses,
-            width,
-            label="RMSE",
+        # -----------------------------------------------------
+        # Zero reference line
+        # -----------------------------------------------------
+        ax3.axhline(
+            0,
+            color="k",
+            lw=1,
+            ls="--",
         )
 
-        ax3.bar(
-            x + width,
-            medians,
-            width,
-            label="Median",
+        # -----------------------------------------------------
+        # Labels
+        # -----------------------------------------------------
+        ax3.set_xticks(
+            np.arange(1, len(methods) + 1)
         )
-
-        ax3.set_xticks(x)
 
         ax3.set_xticklabels(
             methods
         )
 
         ax3.set_ylabel(
-            "Error [m]"
+            "Stable-ground residuals [m]"
         )
 
         ax3.set_title(
-            "Co-registration "
-            "method comparison"
+            "Co-registration method comparison"
         )
 
-        ax3.legend()
+        # -----------------------------------------------------
+        # Optional: symmetric limits
+        # -----------------------------------------------------
+        ymax = np.nanpercentile(
+            np.abs(
+                np.concatenate(
+                    residual_lists
+                )
+            ),
+            99,
+        )
+
+        ax3.set_ylim(
+            -ymax,
+            ymax,
+        )
 
         fig3.savefig(
             cfg.output_dir
-            / "coreg_comparison.png",
+            / "coreg_comparison_violin.png",
             dpi=220,
         )
 
         plt.close(fig3)
+
+    # =========================================================
+    # Figure 5: Residual vs slope
+    # =========================================================
+
+    slope = change_data["slope"]
+
+    slope_valid = slope[
+        plot_valid_stable
+    ]
+
+    residual_valid = residual[
+        plot_valid_stable
+    ]
+
+    fig5, ax5 = plt.subplots(
+        figsize=(7, 5)
+    )
+
+    hb = ax5.hexbin(
+        slope_valid,
+        residual_valid,
+        gridsize=60,
+        bins="log",
+        mincnt=1,
+        cmap="viridis",
+    )
+
+    cb = fig5.colorbar(
+        hb,
+        ax=ax5,
+    )
+
+    cb.set_label(
+        "log10(N)"
+    )
+
+    ax5.axhline(
+        0,
+        color="k",
+        ls="--",
+        lw=1,
+    )
+
+    ax5.set_xlabel(
+        "Slope [deg]"
+    )
+
+    ax5.set_ylabel(
+        "Residual [m]"
+    )
+
+    ax5.set_title(
+        "Residuals vs terrain slope"
+    )
+
+    fig5.savefig(
+        cfg.output_dir
+        / "residual_vs_slope.png",
+        dpi=250,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig5)

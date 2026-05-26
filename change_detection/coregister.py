@@ -8,11 +8,19 @@ def load_stable_mask(stable_ground_path, ref_dem):
         return np.isfinite(np.array(ref_dem.data))
 
     stable_vector = gu.Vector(stable_ground_path)
-    return np.array(stable_vector.create_mask(ref_dem).data).astype(bool)
+
+    return np.array(
+        stable_vector.create_mask(ref_dem).data
+    ).astype(bool)
 
 
 def build_valid_mask(ref_arr, target_arr):
-    invalid_values = [-9999, -99999, -32768]
+
+    invalid_values = [
+        -9999,
+        -99999,
+        -32768,
+    ]
 
     valid_mask = (
         np.isfinite(ref_arr)
@@ -20,42 +28,69 @@ def build_valid_mask(ref_arr, target_arr):
     )
 
     for invalid in invalid_values:
-        valid_mask &= (ref_arr != invalid)
-        valid_mask &= (target_arr != invalid)
+
+        valid_mask &= (
+            ref_arr != invalid
+        )
+
+        valid_mask &= (
+            target_arr != invalid
+        )
 
     return valid_mask
 
 
 def co_register_dem_pair(cfg):
+
     print("\n[1/3] Co-register DEMs")
 
-    ref_dem = xdem.DEM(cfg.dem_reference_path)
+    # ------------------------------------------------------------------
+    # Load DEMs
+    # ------------------------------------------------------------------
+
+    ref_dem = xdem.DEM(
+        cfg.dem_reference_path
+    )
 
     target_dem = xdem.DEM(
         cfg.dem_target_path
     ).reproject(
         ref_dem,
-        resampling="max"
+        resampling="max",
     )
 
-    ref_arr = np.array(ref_dem.data).astype(np.float32)
-    target_arr = np.array(target_dem.data).astype(np.float32)
+    ref_arr = np.array(
+        ref_dem.data
+    ).astype(np.float32)
+
+    target_arr = np.array(
+        target_dem.data
+    ).astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Stable terrain + valid mask
+    # ------------------------------------------------------------------
 
     stable_mask = load_stable_mask(
         cfg.stable_ground_path,
-        ref_dem
+        ref_dem,
     )
 
     valid_mask = build_valid_mask(
         ref_arr,
-        target_arr
+        target_arr,
     )
 
-    valid_stable = valid_mask & stable_mask
+    valid_stable = (
+        valid_mask
+        & stable_mask
+    )
 
     if np.count_nonzero(valid_stable) == 0:
+
         raise RuntimeError(
-            "No valid stable-ground pixels available for co-registration."
+            "No valid stable-ground pixels "
+            "available for co-registration."
         )
 
     # ------------------------------------------------------------------
@@ -64,15 +99,20 @@ def co_register_dem_pair(cfg):
 
     methods = {
         "none": None,
-        "vertical_shift": xdem.coreg.VerticalShift(),
-        "nuth_kaab": xdem.coreg.NuthKaab(),
+        "vertical_shift":
+            xdem.coreg.VerticalShift(),
+        "nuth_kaab":
+            xdem.coreg.NuthKaab(),
     }
 
     comparison_results = {}
 
     print("\n  Method comparison")
 
-    for method_name, coreg in methods.items():
+    for (
+        method_name,
+        coreg,
+    ) in methods.items():
 
         print(f"\n  -> {method_name}")
 
@@ -92,25 +132,35 @@ def co_register_dem_pair(cfg):
                 inlier_mask=valid_stable,
             )
 
-            target_corrected = coreg.apply(target_dem)
+            target_corrected = coreg.apply(
+                target_dem
+            )
 
         # --------------------------------------------------------------
         # Residual analysis
         # --------------------------------------------------------------
 
         residual = np.array(
-            (target_corrected - ref_dem).data
+            (
+                target_corrected
+                - ref_dem
+            ).data
         ).astype(np.float32)
 
-        stable_vals = residual[valid_stable]
+        stable_vals = residual[
+            valid_stable
+        ]
 
         stable_vals = stable_vals[
-            np.abs(stable_vals) < cfg.outlier_clip_m
+            np.abs(stable_vals)
+            < cfg.outlier_clip_m
         ]
 
         if stable_vals.size == 0:
 
-            print("     no valid residuals")
+            print(
+                "     no valid residuals"
+            )
 
             continue
 
@@ -127,6 +177,7 @@ def co_register_dem_pair(cfg):
 
         comparison_results[method_name] = {
             "stats": stats,
+            "residuals": stable_vals,
         }
 
         print(
@@ -139,22 +190,35 @@ def co_register_dem_pair(cfg):
     # Final co-registration method
     # ------------------------------------------------------------------
 
-    coreg_method = getattr(cfg, "coreg_method", "vertical_shift")
+    coreg_method = getattr(
+        cfg,
+        "coreg_method",
+        "vertical_shift",
+    )
 
     if coreg_method == "vertical_shift":
+
         coreg = xdem.coreg.VerticalShift()
+
         coreg_name = "VerticalShift"
 
     elif coreg_method == "nuth_kaab":
+
         coreg = xdem.coreg.NuthKaab()
+
         coreg_name = "NuthKaab"
 
     else:
+
         raise ValueError(
-            f"Unsupported co-registration method: {coreg_method}"
+            "Unsupported co-registration "
+            f"method: {coreg_method}"
         )
 
-    print(f"\n  Final method: {coreg_name}")
+    print(
+        f"\n  Final method: "
+        f"{coreg_name}"
+    )
 
     # ------------------------------------------------------------------
     # Fit co-registration
@@ -166,25 +230,35 @@ def co_register_dem_pair(cfg):
         inlier_mask=valid_stable,
     )
 
-    target_coreg = coreg.apply(target_dem)
+    target_coreg = coreg.apply(
+        target_dem
+    )
 
     # ------------------------------------------------------------------
     # Residual analysis
     # ------------------------------------------------------------------
 
     residual = np.array(
-        (target_coreg - ref_dem).data
+        (
+            target_coreg
+            - ref_dem
+        ).data
     ).astype(np.float32)
 
-    stable_vals = residual[valid_stable]
+    stable_vals = residual[
+        valid_stable
+    ]
 
     stable_vals = stable_vals[
-        np.abs(stable_vals) < cfg.outlier_clip_m
+        np.abs(stable_vals)
+        < cfg.outlier_clip_m
     ]
 
     if stable_vals.size == 0:
+
         raise RuntimeError(
-            "No stable-ground residual pixels after clipping."
+            "No stable-ground residual "
+            "pixels after clipping."
         )
 
     stats = {
@@ -198,7 +272,10 @@ def co_register_dem_pair(cfg):
         "n": int(stable_vals.size),
     }
 
-    print(f"  stable pixels: {stats['n']:,}")
+    print(
+        f"  stable pixels: "
+        f"{stats['n']:,}"
+    )
 
     print(
         f"  median={stats['median']:+.3f} m, "
