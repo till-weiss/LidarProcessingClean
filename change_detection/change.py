@@ -2,35 +2,111 @@ import numpy as np
 import geoutils as gu
 
 
-def compute_change_products(cfg, coreg_data):
+def compute_change_products(
+    cfg,
+    coreg_data,
+):
+
     print("\n[2/3] Compute dDEM / dDSM")
 
-    ref_dem = coreg_data["reference_dem"]
-    target_coreg = coreg_data["target_coreg"]
-    stable_mask = coreg_data["stable_mask"]
+    # =================================================
+    # Inputs
+    # =================================================
 
-    ddem = target_coreg - ref_dem
+    ref_dem = coreg_data[
+        "reference_dem"
+    ]
+
+    target_coreg = coreg_data[
+        "target_coreg"
+    ]
+
+    stable_mask = coreg_data[
+        "stable_mask"
+    ]
+
+    water_mask = coreg_data[
+        "water_mask"
+    ]
+
+    non_water_mask = (
+        ~water_mask
+    )
+
+    # =================================================
+    # Create dDEM
+    # =================================================
+
+    ddem = (
+        target_coreg
+        - ref_dem
+    )
 
     ddem_arr = np.array(
         ddem.data
     ).astype(np.float32)
 
+    # =================================================
+    # Remove water from dDEM
+    # =================================================
+
+    ddem_arr[
+        water_mask
+    ] = np.nan
+
+    # =================================================
+    # Write masked array back
+    # =================================================
+
+    ddem.data = ddem_arr
+
+    # =================================================
+    # Valid pixels
+    # =================================================
+
     valid = np.isfinite(
         ddem_arr
     )
 
-    all_vals = ddem_arr[
+    # =================================================
+    # Analysis masks
+    # =================================================
+
+    analysis_mask = (
         valid
+        & non_water_mask
+    )
+
+    stable_analysis_mask = (
+        stable_mask
+        & valid
+        & non_water_mask
+    )
+
+    # =================================================
+    # Extract values
+    # =================================================
+
+    all_vals = ddem_arr[
+        analysis_mask
     ]
 
     stable_vals = ddem_arr[
-        stable_mask & valid
+        stable_analysis_mask
     ]
+
+    # =================================================
+    # Outlier clipping
+    # =================================================
 
     stable_vals = stable_vals[
         np.abs(stable_vals)
         < cfg.outlier_clip_m
     ]
+
+    # =================================================
+    # Threshold estimation
+    # =================================================
 
     if cfg.change_threshold_m is None:
 
@@ -49,7 +125,12 @@ def compute_change_products(cfg, coreg_data):
             cfg.change_threshold_m
         )
 
+    # =================================================
+    # Statistics
+    # =================================================
+
     change_stats = {
+
         "aoi_median":
             float(
                 np.nanmedian(
@@ -126,10 +207,18 @@ def compute_change_products(cfg, coreg_data):
             ),
     }
 
+    # =================================================
+    # Pixel area
+    # =================================================
+
     px = abs(
         ref_dem.res[0]
         * ref_dem.res[1]
     )
+
+    # =================================================
+    # Significant change
+    # =================================================
 
     subsidence = all_vals[
         all_vals < -threshold_m
@@ -138,6 +227,10 @@ def compute_change_products(cfg, coreg_data):
     heave = all_vals[
         all_vals > threshold_m
     ]
+
+    # =================================================
+    # Volume calculations
+    # =================================================
 
     change_stats[
         "volume_loss_m3"
@@ -154,8 +247,13 @@ def compute_change_products(cfg, coreg_data):
     ] = float(
         np.sum(
             heave
-        ) * px
+        )
+        * px
     )
+
+    # =================================================
+    # Terrain slope
+    # =================================================
 
     slope = ref_dem.slope()
 
@@ -169,9 +267,27 @@ def compute_change_products(cfg, coreg_data):
         f"±{threshold_m:.3f} m"
     )
 
+    print(
+        f"  analysed pixels "
+        f"(non-water): "
+        f"{all_vals.size:,}"
+    )
+
+    # =================================================
+    # Return outputs
+    # =================================================
+
     return {
-        "ddem": ddem,
-        "ddem_arr": ddem_arr,
-        "change_stats": change_stats,
-        "slope": slope_arr,
+
+        "ddem":
+            ddem,
+
+        "ddem_arr":
+            ddem_arr,
+
+        "change_stats":
+            change_stats,
+
+        "slope":
+            slope_arr,
     }

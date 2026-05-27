@@ -5,15 +5,17 @@ from pathlib import Path
 # Central settings for one change-detection run
 # -------------------------------------------------
 
-AOI_NAME = "Tuktoyaktuk_ICP"
+AOI_NAME = "Tuktoyaktuk_WaterMask"
 DEM_TYPE = "DTM"   # "DTM" or "DSM"
 REF_YEAR = 2023
 TARGET_YEAR = 2025
 COREG_METHOD = "vertical_shift" # or "nuth_kaab"
 
-DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuk_23/DTM/Tuktoyaktuk_Town_2023_cluster_1_DTM_2m.tif"
-DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuk_25/DTM/Tuktoyaktuk_Town_2025_cluster_3_DTM_2m.tif"
+DEM_REFERENCE_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuk_23/DTM/Tuktoyaktuk_Town_2023_DTM_2m.tif"
+DEM_TARGET_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/Tuk_25/DTM/Tuktoyaktuk_Town_2025_DTM_2m.tif"
 STABLE_GROUND_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/StableReferences/Tuk_Airport_Reference.gpkg"
+REFERENCE_WATER_MASK_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/WaterMask/MRD_WaterMask_10m_23.tif"
+TARGET_WATER_MASK_PATH = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/AOI/WaterMask/MRD_watermask_10m_25.tif"
 OUTPUT_DIR = "/isipd/projects/Response/GIS_RS_projects/Masterarbeit_Till_Weiss/results/ChangeDetection"
 
 
@@ -28,6 +30,11 @@ class ChangeDetectionConfig:
     dem_target_path: str = DEM_TARGET_PATH
     stable_ground_path: str | None = STABLE_GROUND_PATH
     output_root: str = OUTPUT_DIR
+    reference_water_mask_path: str | None = (
+        REFERENCE_WATER_MASK_PATH)
+    target_water_mask_path: str | None = (
+        TARGET_WATER_MASK_PATH)
+    water_mask_buffer_pixels: int = 0
 
     outlier_clip_m: float = 100.0
     change_threshold_m: float | None = None
