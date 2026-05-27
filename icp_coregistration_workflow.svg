@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1500" viewBox="0 0 900 1500">
+  <defs>
+    <style>
+      .title{font:700 34px Arial,sans-serif;fill:#1f2a35}.sub{font:500 17px Arial,sans-serif;fill:#5b6d7d}
+      .g{font:700 16px Arial,sans-serif;fill:#355064}.s{font:600 17px Arial,sans-serif;fill:#1f2a35}
+      .d{font:600 14px Arial,sans-serif;fill:#263b4d}.m{font:500 13px Arial,sans-serif;fill:#52687b}
+    </style>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#6e8498"/></marker>
+  </defs>
+  <rect width="900" height="1500" fill="#fff"/>
+  <text x="450" y="56" text-anchor="middle" class="title">ICP Co-registration Workflow</text>
+  <text x="450" y="84" text-anchor="middle" class="sub">Cluster-based iterative strip registration for ALS alignment</text>
+
+  <rect x="90" y="112" width="720" height="290" rx="20" fill="#eef4f8" stroke="#d2e0ea"/>
+  <text x="115" y="140" class="g">Preprocessing</text>
+  <rect x="180" y="160" width="540" height="52" rx="12" fill="#dbe8f3" stroke="#9db6c9"/><text x="450" y="193" text-anchor="middle" class="s">1. Input ALS Strips</text>
+  <rect x="180" y="230" width="540" height="52" rx="12" fill="#d6e5f1" stroke="#97b1c7"/><text x="450" y="263" text-anchor="middle" class="s">2. Sort Strips Chronologically</text>
+  <rect x="180" y="300" width="540" height="52" rx="12" fill="#d2e3ef" stroke="#90abc2"/><text x="450" y="332" text-anchor="middle" class="s">3. Build ICP-ready Strips</text><text x="450" y="348" text-anchor="middle" class="m">stable-ground filtering · voxel downsampling</text>
+  <path d="M450 212 L450 230 M450 282 L450 300" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#a)"/>
+
+  <rect x="75" y="430" width="750" height="890" rx="24" fill="#f3f7fb" stroke="#9fb7ca" stroke-dasharray="8 6"/>
+  <text x="100" y="458" class="g">Core ICP iterative registration</text>
+
+  <rect x="180" y="480" width="540" height="50" rx="12" fill="#d4e5f1" stroke="#95b1c7"/><text x="450" y="512" text-anchor="middle" class="s">4. Select Initial Seed Strip</text>
+  <rect x="180" y="548" width="540" height="50" rx="12" fill="#d0e2ef" stroke="#8faac2"/><text x="450" y="580" text-anchor="middle" class="s">5. Create Cluster from Seed</text>
+  <rect x="180" y="616" width="540" height="50" rx="12" fill="#d4e5f1" stroke="#95b1c7"/><text x="450" y="648" text-anchor="middle" class="s">6. Search Overlapping Candidate Strips</text>
+
+  <polygon points="450,684 520,736 450,788 380,736" fill="#e5edf5" stroke="#99b1c3"/><text x="450" y="740" text-anchor="middle" class="d">Sufficient overlap?</text>
+
+  <rect x="180" y="808" width="540" height="50" rx="12" fill="#cfe1ee" stroke="#8da8c0"/><text x="450" y="840" text-anchor="middle" class="s">7. Select Best Reference Strip</text>
+  <rect x="180" y="876" width="540" height="50" rx="12" fill="#d4e5f1" stroke="#95b1c7"/><text x="450" y="908" text-anchor="middle" class="s">8. Crop Overlap Regions</text>
+  <rect x="180" y="944" width="540" height="62" rx="12" fill="#c9dceb" stroke="#88a6be"/><text x="450" y="975" text-anchor="middle" class="s">9. Run Point-to-Plane ICP</text><text x="450" y="994" text-anchor="middle" class="m">find correspondences · estimate/apply transform · compute residuals</text>
+
+  <polygon points="450,1026 520,1078 450,1130 380,1078" fill="#e3edf5" stroke="#98b0c3"/><text x="450" y="1082" text-anchor="middle" class="d">Valid ICP result?</text>
+  <polygon points="450,1148 520,1200 450,1252 380,1200" fill="#e5edf5" stroke="#99b1c3"/><text x="450" y="1204" text-anchor="middle" class="d">Quality threshold passed?</text>
+
+  <rect x="560" y="1168" width="230" height="46" rx="10" fill="#d0e2ef" stroke="#8faac2"/><text x="675" y="1197" text-anchor="middle" class="m">10. Apply Transformation</text>
+  <rect x="560" y="1224" width="230" height="46" rx="10" fill="#d5e4f1" stroke="#96b1c7"/><text x="675" y="1253" text-anchor="middle" class="m">11. Add Aligned Strip to Cluster</text>
+
+  <polygon points="450,1270 520,1322 450,1374 380,1322" fill="#e3edf5" stroke="#98b0c3"/><text x="450" y="1326" text-anchor="middle" class="d">Unresolved strips remaining?</text>
+  <rect x="110" y="1298" width="240" height="56" rx="12" fill="#dbe8f3" stroke="#9db6c9"/><text x="230" y="1323" text-anchor="middle" class="m">12. Create New Cluster</text><text x="230" y="1342" text-anchor="middle" class="m">from next seed strip</text>
+
+  <rect x="540" y="1396" width="280" height="60" rx="12" fill="#d0e0ed" stroke="#8ea8bd"/><text x="680" y="1421" text-anchor="middle" class="m">13. Merge Aligned Clusters</text><text x="680" y="1440" text-anchor="middle" class="m">Output: accepted aligned strips</text>
+
+  <path d="M450 352 L450 480 M450 530 L450 548 M450 598 L450 616 M450 666 L450 684 M450 788 L450 808 M450 858 L450 876 M450 926 L450 944 M450 1006 L450 1026 M450 1130 L450 1148" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#a)"/>
+
+  <path d="M520 736 L560 736 L560 840 L720 840" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/>
+  <text x="527" y="724" class="m">Yes</text>
+  <path d="M380 736 L130 736 L130 648 L180 648" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/>
+  <text x="140" y="724" class="m">No: postpone unresolved</text>
+
+  <path d="M520 1078 L560 1078 L560 1191" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="528" y="1066" class="m">Yes</text>
+  <path d="M380 1078 L120 1078 L120 648 L180 648" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="130" y="1066" class="m">No: try next candidate</text>
+
+  <path d="M520 1200 L560 1200" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="528" y="1188" class="m">Yes</text>
+  <path d="M380 1200 L100 1200 L100 648 L180 648" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="110" y="1188" class="m">No: keep unresolved</text>
+
+  <path d="M675 1214 L675 1224 M560 1247 L540 1247 L540 648 L720 648" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/>
+  <text x="545" y="1235" class="m">continue iterative registration</text>
+
+  <path d="M450 1252 L450 1270" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/>
+  <path d="M380 1322 L350 1322" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="334" y="1310" class="m">Yes</text>
+  <path d="M230 1298 L230 505 L180 505" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/>
+  <path d="M520 1322 L540 1322 L540 1396" stroke="#6e8498" stroke-width="2.2" fill="none" marker-end="url(#a)"/><text x="526" y="1310" class="m">No</text>
+</svg>

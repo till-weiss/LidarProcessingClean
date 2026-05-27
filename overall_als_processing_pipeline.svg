@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1400" viewBox="0 0 900 1400">
+  <defs>
+    <style>
+      .t{font:700 34px Arial,sans-serif;fill:#1f2a35}.st{font:500 17px Arial,sans-serif;fill:#5b6d7d}
+      .g{font:700 16px Arial,sans-serif;fill:#355064}.s{font:600 18px Arial,sans-serif;fill:#1f2a35}.o{font:500 13px Arial,sans-serif;fill:#52687b}
+    </style>
+    <marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#6e8498"/></marker>
+  </defs>
+  <rect width="900" height="1400" fill="#fff"/>
+  <text x="450" y="56" text-anchor="middle" class="t">Overall ALS Processing Pipeline</text>
+  <text x="450" y="84" text-anchor="middle" class="st">Multi-temporal ALS workflow for elevation change and permafrost interpretation</text>
+
+  <rect x="90" y="120" width="720" height="180" rx="18" fill="#edf3f8" stroke="#d5e1eb"/><text x="115" y="148" class="g">Data Preparation</text>
+  <rect x="180" y="170" width="540" height="54" rx="12" fill="#dbe8f3" stroke="#9db6c9"/><text x="450" y="204" text-anchor="middle" class="s">1. Raw ALS Flight Strips</text>
+  <rect x="180" y="238" width="540" height="54" rx="12" fill="#d5e4f1" stroke="#94afc6"/><text x="450" y="270" text-anchor="middle" class="s">2. Preprocessing</text><text x="450" y="286" text-anchor="middle" class="o">strip organisation · reprojection · cleaning · output: cleaned strips</text>
+
+  <rect x="90" y="320" width="720" height="150" rx="18" fill="#eaf2f7" stroke="#d0deea"/><text x="115" y="348" class="g">Geometric Alignment</text>
+  <rect x="180" y="370" width="540" height="54" rx="12" fill="#d0e1ef" stroke="#8eaac2"/><text x="450" y="404" text-anchor="middle" class="s">3. Ground Classification</text><text x="450" y="420" text-anchor="middle" class="o">output: classified point clouds</text>
+  <rect x="180" y="430" width="540" height="54" rx="12" fill="#d4e5f1" stroke="#95b1c7"/><text x="450" y="464" text-anchor="middle" class="s">4. Co-registration (ICP-based alignment)</text><text x="450" y="480" text-anchor="middle" class="o">output: aligned strips</text>
+
+  <rect x="90" y="500" width="720" height="150" rx="18" fill="#edf5f9" stroke="#d6e4ee"/><text x="115" y="528" class="g">Surface Modelling</text>
+  <rect x="180" y="550" width="540" height="54" rx="12" fill="#d4e6f1" stroke="#95b1c7"/><text x="450" y="584" text-anchor="middle" class="s">5. DSM / DTM Generation</text><text x="450" y="600" text-anchor="middle" class="o">output: raster DEMs</text>
+  <rect x="180" y="610" width="540" height="54" rx="12" fill="#dae9f3" stroke="#9eb8cb"/><text x="450" y="644" text-anchor="middle" class="s">6. Stable Ground Extraction</text><text x="450" y="660" text-anchor="middle" class="o">output: stable-ground masks</text>
+
+  <rect x="90" y="680" width="720" height="150" rx="18" fill="#eef4f8" stroke="#d8e3ec"/><text x="115" y="708" class="g">Accuracy Evaluation</text>
+  <rect x="180" y="730" width="540" height="68" rx="12" fill="#d2e3f0" stroke="#8faac1"/><text x="450" y="764" text-anchor="middle" class="s">7. Accuracy Assessment</text><text x="450" y="784" text-anchor="middle" class="o">NMAD · median bias · agreement analysis</text>
+
+  <rect x="90" y="850" width="720" height="220" rx="18" fill="#f1f6fa" stroke="#dbe7ef"/><text x="115" y="878" class="g">Change Detection &amp; Interpretation</text>
+  <rect x="180" y="900" width="540" height="68" rx="12" fill="#dbe9f3" stroke="#a0bacd"/><text x="450" y="934" text-anchor="middle" class="s">8. Multi-temporal Elevation Change Analysis</text><text x="450" y="954" text-anchor="middle" class="o">output: elevation-change rasters</text>
+  <rect x="180" y="980" width="540" height="54" rx="12" fill="#d0e0ed" stroke="#8ea8bd"/><text x="450" y="1014" text-anchor="middle" class="s">9. Permafrost Thaw Interpretation</text>
+
+  <path d="M450 224 L450 238 M450 292 L450 370 M450 424 L450 430 M450 484 L450 550 M450 604 L450 610 M450 664 L450 730 M450 798 L450 900 M450 968 L450 980" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
+</svg>
