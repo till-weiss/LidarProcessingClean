@@ -1,88 +1,136 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1080" viewBox="0 0 1500 1080">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1460" viewBox="0 0 900 1460">
   <defs>
     <style>
       .title { font: 700 34px 'Arial', sans-serif; fill: #1f2a35; }
-      .subtitle { font: 500 17px 'Arial', sans-serif; fill: #5b6b7a; }
-      .step { font: 600 19px 'Arial', sans-serif; fill: #1f2a35; }
-      .detail { font: 400 15px 'Arial', sans-serif; fill: #4f6172; }
-      .loopTitle { font: 700 17px 'Arial', sans-serif; fill: #33556d; }
+      .subtitle { font: 500 18px 'Arial', sans-serif; fill: #5c6d7d; }
+      .groupLabel { font: 700 16px 'Arial', sans-serif; fill: #355064; }
+      .step { font: 600 18px 'Arial', sans-serif; fill: #1f2a35; }
+      .small { font: 500 14px 'Arial', sans-serif; fill: #52687b; }
+      .decision { font: 600 15px 'Arial', sans-serif; fill: #223546; }
+      .yn { font: 500 13px 'Arial', sans-serif; fill: #4e677b; }
     </style>
-    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-      <path d="M0,0 L12,6 L0,12 Z" fill="#6b8194"/>
+    <marker id="arrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+      <path d="M0,0 L11,5.5 L0,11 Z" fill="#6e8498"/>
     </marker>
   </defs>
 
-  <rect width="1500" height="1080" fill="#ffffff"/>
-  <text x="750" y="58" text-anchor="middle" class="title">ICP Co-registration Workflow</text>
-  <text x="750" y="88" text-anchor="middle" class="subtitle">Detailed strip registration method for geometric alignment of ALS point clouds</text>
+  <rect width="900" height="1400" fill="#ffffff"/>
+  <text x="450" y="58" text-anchor="middle" class="title">ICP Co-registration Workflow</text>
+  <text x="450" y="88" text-anchor="middle" class="subtitle">Cluster-based iterative strip alignment for ALS co-registration</text>
 
-  <!-- Main flow nodes -->
-  <rect x="140" y="145" width="280" height="70" rx="14" fill="#dbe8f3" stroke="#9db6c9"/>
-  <text x="280" y="188" text-anchor="middle" class="step">1. Input ALS Strips</text>
+  <!-- Preprocessing block -->
+  <rect x="80" y="120" width="740" height="330" rx="20" fill="#eef4f8" stroke="#d2e0ea"/>
+  <text x="105" y="148" class="groupLabel">Preprocessing for registration</text>
 
-  <rect x="470" y="145" width="280" height="70" rx="14" fill="#d6e5f1" stroke="#97b1c7"/>
-  <text x="610" y="188" text-anchor="middle" class="step">2. Select Reference Strip</text>
+  <rect x="180" y="170" width="540" height="56" rx="12" fill="#dbe8f3" stroke="#9db6c9"/>
+  <text x="450" y="205" text-anchor="middle" class="step">1. Input ALS Strips</text>
 
-  <rect x="800" y="145" width="280" height="70" rx="14" fill="#d2e3ef" stroke="#90abc2"/>
-  <text x="940" y="188" text-anchor="middle" class="step">3. Extract Overlapping Areas</text>
+  <rect x="180" y="245" width="540" height="56" rx="12" fill="#d5e4f1" stroke="#96b1c7"/>
+  <text x="450" y="280" text-anchor="middle" class="step">2. Sort Strips Chronologically</text>
 
-  <rect x="1130" y="145" width="250" height="70" rx="14" fill="#dbe8f3" stroke="#9db6c9"/>
-  <text x="1255" y="188" text-anchor="middle" class="step">4. Stable Ground Filtering</text>
+  <rect x="180" y="320" width="540" height="56" rx="12" fill="#d3e3ef" stroke="#91abc2"/>
+  <text x="450" y="355" text-anchor="middle" class="step">3. Build ICP-ready Strips</text>
+  <text x="450" y="372" text-anchor="middle" class="small">stable-ground filtering · voxel subsampling</text>
 
-  <rect x="560" y="270" width="380" height="70" rx="14" fill="#d3e4f0" stroke="#91acc3"/>
-  <text x="750" y="313" text-anchor="middle" class="step">5. Point Subsampling</text>
+  <rect x="180" y="395" width="540" height="40" rx="12" fill="#dbe8f3" stroke="#9db6c9"/>
+  <text x="450" y="421" text-anchor="middle" class="small">Output: ICP-ready strip set + unresolved strip pool</text>
 
-  <rect x="560" y="380" width="380" height="70" rx="14" fill="#d8e7f2" stroke="#9ab4c8"/>
-  <text x="750" y="423" text-anchor="middle" class="step">6. Initial Alignment</text>
+  <path d="M450 226 L450 245" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 301 L450 320" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 376 L450 395" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
 
-  <!-- ICP loop panel -->
-  <rect x="250" y="490" width="1000" height="350" rx="24" fill="#eef4f8" stroke="#9db4c6" stroke-dasharray="8 6"/>
-  <text x="290" y="525" class="loopTitle">7. Iterative Closest Point (ICP) Loop</text>
+  <!-- ICP core block -->
+  <rect x="70" y="470" width="760" height="760" rx="24" fill="#f3f7fb" stroke="#9fb7ca" stroke-dasharray="8 6"/>
+  <text x="95" y="500" class="groupLabel">Core ICP iterative registration (cluster-based)</text>
 
-  <rect x="310" y="560" width="210" height="70" rx="12" fill="#c9dceb" stroke="#88a6be"/>
-  <text x="415" y="603" text-anchor="middle" class="step">Find Correspondences</text>
+  <rect x="170" y="525" width="560" height="52" rx="12" fill="#d4e5f1" stroke="#95b1c7"/>
+  <text x="450" y="558" text-anchor="middle" class="step">4. Select Initial Seed Strip</text>
 
-  <rect x="545" y="560" width="210" height="70" rx="12" fill="#c5d9e9" stroke="#86a3bc"/>
-  <text x="650" y="603" text-anchor="middle" class="step">Estimate</text>
-  <text x="650" y="622" text-anchor="middle" class="detail">Transformation</text>
+  <rect x="170" y="595" width="560" height="52" rx="12" fill="#d0e2ef" stroke="#8faac2"/>
+  <text x="450" y="628" text-anchor="middle" class="step">5. Create Cluster from Seed</text>
 
-  <rect x="780" y="560" width="210" height="70" rx="12" fill="#c9dceb" stroke="#88a6be"/>
-  <text x="885" y="603" text-anchor="middle" class="step">Apply Transformation</text>
+  <rect x="170" y="665" width="560" height="52" rx="12" fill="#d4e5f1" stroke="#95b1c7"/>
+  <text x="450" y="698" text-anchor="middle" class="step">6. Search Overlapping Candidate Strips</text>
 
-  <rect x="1015" y="560" width="210" height="70" rx="12" fill="#c5d9e9" stroke="#86a3bc"/>
-  <text x="1120" y="603" text-anchor="middle" class="step">Compute</text>
-  <text x="1120" y="622" text-anchor="middle" class="detail">Residual Error</text>
+  <!-- decision 1 -->
+  <polygon points="450,737 520,792 450,847 380,792" fill="#e6eef5" stroke="#9bb2c4"/>
+  <text x="450" y="788" text-anchor="middle" class="decision">Sufficient overlap?</text>
 
-  <rect x="590" y="700" width="320" height="80" rx="14" fill="#d1e3f0" stroke="#90abc2"/>
-  <text x="750" y="744" text-anchor="middle" class="step">8. Convergence Check</text>
+  <rect x="170" y="870" width="560" height="52" rx="12" fill="#cfe1ee" stroke="#8da8c0"/>
+  <text x="450" y="903" text-anchor="middle" class="step">7. Select Best Reference Strip</text>
 
-  <rect x="370" y="900" width="360" height="75" rx="14" fill="#d8e7f2" stroke="#9ab4c8"/>
-  <text x="550" y="944" text-anchor="middle" class="step">9. Aligned Point Clouds</text>
+  <rect x="170" y="940" width="560" height="52" rx="12" fill="#d4e5f1" stroke="#95b1c7"/>
+  <text x="450" y="973" text-anchor="middle" class="step">8. Crop Overlap Regions</text>
 
-  <rect x="780" y="900" width="360" height="75" rx="14" fill="#d2e3ef" stroke="#90abc2"/>
-  <text x="960" y="944" text-anchor="middle" class="step">10. Merge Registered Strips</text>
+  <rect x="170" y="1010" width="560" height="56" rx="12" fill="#c9dceb" stroke="#88a6be"/>
+  <text x="450" y="1041" text-anchor="middle" class="step">9. Run Point-to-Plane ICP</text>
+  <text x="450" y="1058" text-anchor="middle" class="small">find correspondences · estimate / apply transform · compute residuals</text>
 
-  <!-- Arrows main -->
-  <path d="M420 180 L470 180" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M750 180 L800 180" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M1080 180 L1130 180" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M1255 215 L1255 255 L940 255 L940 305" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M750 340 L750 380" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M750 450 L750 490" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
+  <!-- decision 2 -->
+  <polygon points="450,1087 520,1142 450,1197 380,1142" fill="#e3edf5" stroke="#98b0c3"/>
+  <text x="450" y="1138" text-anchor="middle" class="decision">Valid ICP result?</text>
 
-  <!-- ICP inner flow -->
-  <path d="M520 595 L545 595" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M755 595 L780 595" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M990 595 L1015 595" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M1120 630 L1120 680 L910 680" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M590 740 L520 740 L520 630 L415 630" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
+  <!-- decision 3 -->
+  <polygon points="450,1212 520,1267 450,1322 380,1267" fill="#e6eef5" stroke="#9bb2c4"/>
+  <text x="450" y="1263" text-anchor="middle" class="decision">Quality threshold passed?</text>
 
-  <!-- convergence exits -->
-  <path d="M750 780 L750 860 L550 860 L550 900" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <path d="M730 740 L670 740" stroke="#5f7b92" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <text x="600" y="728" class="detail">not converged</text>
-  <path d="M910 740 L980 740 L980 860 L960 860 L960 900" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
-  <text x="920" y="728" class="detail">converged</text>
+  <!-- flow arrows in block -->
+  <path d="M450 577 L450 595" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 647 L450 665" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 717 L450 737" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 847 L450 870" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 922 L450 940" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 992 L450 1010" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 1066 L450 1087" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M450 1197 L450 1212" stroke="#6e8498" stroke-width="2.6" fill="none" marker-end="url(#arrow)"/>
 
-  <path d="M730 937 L780 937" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow2)"/>
+  <!-- overlap fail loop: postpone unresolved -->
+  <path d="M380 792 L130 792 L130 698 L170 698" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="140" y="780" class="yn">No → postpone strip (unresolved)</text>
+
+  <!-- ICP invalid loop -->
+  <path d="M380 1142 L110 1142 L110 698 L170 698" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="120" y="1129" class="yn">No → retry with next candidate</text>
+
+  <!-- quality fail loop -->
+  <path d="M380 1267 L90 1267 L90 698 L170 698" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="100" y="1254" class="yn">No → keep unresolved, continue search</text>
+
+  <!-- accepted path -->
+  <rect x="560" y="1240" width="250" height="54" rx="12" fill="#d0e2ef" stroke="#8faac2"/>
+  <text x="685" y="1273" text-anchor="middle" class="step" style="font-size:16px">10. Apply Transformation</text>
+
+  <rect x="560" y="1304" width="250" height="54" rx="12" fill="#d5e4f1" stroke="#96b1c7"/>
+  <text x="685" y="1337" text-anchor="middle" class="step" style="font-size:16px">11. Add Aligned Strip to Cluster</text>
+
+  <path d="M520 1267 L560 1267" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="525" y="1254" class="yn">Yes</text>
+  <path d="M685 1294 L685 1304" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <path d="M560 1331 L540 1331 L540 698 L730 698" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="545" y="1318" class="yn">continue iterative registration</text>
+
+  <text x="460" y="860" class="yn">Yes</text>
+  <text x="460" y="1128" class="yn">Yes</text>
+
+  <!-- post-loop outputs and unresolved management -->
+  <polygon points="450,1245 520,1300 450,1355 380,1300" fill="#e3edf5" stroke="#98b0c3"/>
+  <text x="450" y="1296" text-anchor="middle" class="decision">Unresolved strips remaining?</text>
+
+  <rect x="110" y="1268" width="250" height="64" rx="12" fill="#dbe8f3" stroke="#9db6c9"/>
+  <text x="235" y="1296" text-anchor="middle" class="step" style="font-size:16px">12. Create New Cluster</text>
+  <text x="235" y="1315" text-anchor="middle" class="small">from next seed strip</text>
+
+  <rect x="540" y="1368" width="300" height="64" rx="12" fill="#d0e0ed" stroke="#8ea8bd"/>
+  <text x="690" y="1396" text-anchor="middle" class="step" style="font-size:16px">13. Merge Aligned Clusters</text>
+  <text x="690" y="1415" text-anchor="middle" class="small">output accepted aligned strips</text>
+
+  <path d="M450 435 L450 470" stroke="#6e8498" stroke-width="2.8" fill="none" marker-end="url(#arrow)"/>
+
+  <path d="M450 1322 L450 1245" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <path d="M380 1300 L360 1300" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="330" y="1288" class="yn">Yes</text>
+  <path d="M235 1268 L235 558 L170 558" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+
+  <path d="M520 1300 L540 1300 L540 1368" stroke="#6e8498" stroke-width="2.4" fill="none" marker-end="url(#arrow)"/>
+  <text x="525" y="1288" class="yn">No</text>
 </svg>
