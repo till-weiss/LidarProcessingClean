@@ -332,6 +332,17 @@ def co_register_dem_pair(cfg):
         f"NMAD={stats['nmad']:.3f} m, "
         f"STD={stats['std']:.3f} m"
     )
+    print(
+    "Stable pixels:",
+    np.count_nonzero(stable_mask)
+    )
+
+    print(
+        "Stable pixels after water masking:",
+        np.count_nonzero(
+            stable_mask & non_water_mask
+        )
+    )
 
     return {
         "reference_dem": ref_dem,
@@ -344,3 +355,4 @@ def co_register_dem_pair(cfg):
         "coreg_method": coreg_name,
         "coreg_model": coreg,
     }
+
