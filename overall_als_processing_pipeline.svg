@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980">
+  <defs>
+    <style>
+      .title { font: 700 34px 'Arial', sans-serif; fill: #1f2a35; }
+      .subtitle { font: 500 17px 'Arial', sans-serif; fill: #5b6b7a; }
+      .group { font: 700 18px 'Arial', sans-serif; fill: #304556; }
+      .step { font: 600 20px 'Arial', sans-serif; fill: #1f2a35; }
+      .detail { font: 400 15px 'Arial', sans-serif; fill: #4f6172; }
+      .output { font: 500 14px 'Arial', sans-serif; fill: #5e7385; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#6b8194"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="980" fill="#ffffff"/>
+  <text x="750" y="58" text-anchor="middle" class="title">Overall ALS Processing Pipeline</text>
+  <text x="750" y="88" text-anchor="middle" class="subtitle">High-level workflow for multi-temporal elevation analysis and permafrost interpretation</text>
+
+  <!-- Group backgrounds -->
+  <rect x="70" y="130" width="1360" height="150" rx="20" fill="#edf3f8" stroke="#d5e1eb"/>
+  <rect x="70" y="300" width="1360" height="120" rx="20" fill="#eaf2f7" stroke="#d0deea"/>
+  <rect x="70" y="440" width="1360" height="120" rx="20" fill="#edf5f9" stroke="#d6e4ee"/>
+  <rect x="70" y="580" width="1360" height="120" rx="20" fill="#eef4f8" stroke="#d8e3ec"/>
+  <rect x="70" y="720" width="1360" height="170" rx="20" fill="#f1f6fa" stroke="#dbe7ef"/>
+
+  <text x="95" y="160" class="group">Data Preparation</text>
+  <text x="95" y="330" class="group">Geometric Alignment</text>
+  <text x="95" y="470" class="group">Surface Modelling</text>
+  <text x="95" y="610" class="group">Accuracy Evaluation</text>
+  <text x="95" y="750" class="group">Change Detection &amp; Interpretation</text>
+
+  <!-- Steps -->
+  <g>
+    <rect x="170" y="185" width="320" height="75" rx="14" fill="#dbe8f3" stroke="#9db6c9"/>
+    <text x="330" y="228" text-anchor="middle" class="step">1. Raw ALS Flight Strips</text>
+  </g>
+
+  <g>
+    <rect x="560" y="175" width="390" height="95" rx="14" fill="#d5e4f1" stroke="#94afc6"/>
+    <text x="755" y="212" text-anchor="middle" class="step">2. Preprocessing</text>
+    <text x="755" y="236" text-anchor="middle" class="detail">strip organisation · reprojection · cleaning</text>
+    <text x="755" y="257" text-anchor="middle" class="output">output: cleaned strips</text>
+  </g>
+
+  <g>
+    <rect x="1020" y="185" width="320" height="75" rx="14" fill="#dbe8f3" stroke="#9db6c9"/>
+    <text x="1180" y="228" text-anchor="middle" class="step">3. Ground Classification</text>
+    <text x="1180" y="250" text-anchor="middle" class="output">output: classified point clouds</text>
+  </g>
+
+  <g>
+    <rect x="510" y="325" width="480" height="75" rx="14" fill="#d0e1ef" stroke="#8eaac2"/>
+    <text x="750" y="367" text-anchor="middle" class="step">4. Co-registration (ICP-based alignment)</text>
+    <text x="750" y="389" text-anchor="middle" class="output">output: aligned strips</text>
+  </g>
+
+  <g>
+    <rect x="510" y="465" width="480" height="75" rx="14" fill="#d4e6f1" stroke="#95b1c7"/>
+    <text x="750" y="508" text-anchor="middle" class="step">5. DSM / DTM Generation</text>
+    <text x="750" y="530" text-anchor="middle" class="output">output: raster DEMs</text>
+  </g>
+
+  <g>
+    <rect x="510" y="605" width="480" height="75" rx="14" fill="#dae9f3" stroke="#9eb8cb"/>
+    <text x="750" y="648" text-anchor="middle" class="step">6. Stable Ground Extraction</text>
+    <text x="750" y="670" text-anchor="middle" class="output">output: stable-ground masks</text>
+  </g>
+
+  <g>
+    <rect x="510" y="755" width="480" height="95" rx="14" fill="#d2e3f0" stroke="#8faac1"/>
+    <text x="750" y="792" text-anchor="middle" class="step">7. Accuracy Assessment</text>
+    <text x="750" y="816" text-anchor="middle" class="detail">NMAD · median bias · agreement analysis</text>
+  </g>
+
+  <g>
+    <rect x="1010" y="755" width="360" height="95" rx="14" fill="#dbe9f3" stroke="#a0bacd"/>
+    <text x="1190" y="792" text-anchor="middle" class="step">8. Multi-temporal</text>
+    <text x="1190" y="816" text-anchor="middle" class="step">Elevation Change Analysis</text>
+    <text x="1190" y="838" text-anchor="middle" class="output">output: elevation-change rasters</text>
+  </g>
+
+  <g>
+    <rect x="1010" y="885" width="360" height="65" rx="14" fill="#d0e0ed" stroke="#8ea8bd"/>
+    <text x="1190" y="924" text-anchor="middle" class="step">9. Permafrost Thaw Interpretation</text>
+  </g>
+
+  <!-- Arrows -->
+  <path d="M490 222 L560 222" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M950 222 L1020 222" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1180 260 L1180 300 L750 300 L750 325" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M750 400 L750 465" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M750 540 L750 605" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M750 680 L750 755" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M990 802 L1010 802" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1190 850 L1190 885" stroke="#6b8194" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+</svg>
