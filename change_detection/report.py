@@ -14,7 +14,7 @@ plt.rcParams.update(
         "xtick.labelsize": 10,
         "ytick.labelsize": 10,
         "legend.fontsize": 10,
-        "figure.dpi": 150,
+        "figure.dpi": 300,
         "axes.spines.top": False,
         "axes.spines.right": False,
     }
@@ -394,7 +394,7 @@ def save_outputs(cfg, coreg_data, change_data):
         fontsize=13, fontweight="bold",
     )
 
-    fig2.savefig(cfg.distribution_png, dpi=220)
+    fig2.savefig(cfg.distribution_png, dpi=300)
     plt.close(fig2)
 
     # =========================================================
@@ -496,7 +496,7 @@ def save_outputs(cfg, coreg_data, change_data):
 
         fig3.savefig(
             cfg.output_dir / "coreg_comparison_violin.png",
-            dpi=220,
+            dpi=300,
         )
         plt.close(fig3)
 
@@ -560,7 +560,7 @@ def save_outputs(cfg, coreg_data, change_data):
 
     fig5.savefig(
         cfg.output_dir / "residual_vs_slope.png",
-        dpi=250,
+        dpi=300,
         bbox_inches="tight",
     )
     plt.close(fig5)
